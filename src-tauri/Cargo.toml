@@ -1,0 +1,33 @@
+[package]
+name = "koemoji"
+version = "0.1.0"
+description = "音声・動画をローカルで文字起こしするデスクトップアプリ"
+edition = "2021"
+
+[lib]
+name = "koemoji_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "stream",
+] }
+symphonia = { version = "0.5", features = ["all"] }
+whisper-rs = "0.16"
+
+# GPU を使う場合は whisper-rs の features を切り替える(README 参照)
+# 例: whisper-rs = { version = "0.16", features = ["cuda"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

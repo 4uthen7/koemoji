@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KoeMoji — ローカル文字起こし</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="wordmark">
+        <span class="lamp" id="lamp"></span>
+        <h1>KoeMoji</h1>
+        <span class="tagline">音声 + 画面テキストをローカルでノート化</span>
+      </div>
+    </header>
+
+    <main class="app-main">
+      <!-- ファイル選択 -->
+      <section class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="ファイルを選択">
+        <div class="dropzone-inner">
+          <svg class="dz-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+            <path d="M12 3v12" stroke-linecap="round"/>
+            <path d="M7 8l5-5 5 5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M4 15v3a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-3" stroke-linecap="round"/>
+          </svg>
+          <p class="dz-title" id="dz-title">音声・動画ファイルをドロップ、またはクリックして選択</p>
+          <p class="dz-sub">wav / mp3 / m4a / flac / ogg / mp4 / mov / mkv など</p>
+        </div>
+      </section>
+
+      <!-- 動画OCR -->
+      <section class="ocr-panel" aria-labelledby="ocr-title">
+        <div class="ocr-heading">
+          <div>
+            <h2 id="ocr-title">画面テキストも取り込む</h2>
+            <p id="ocr-note">画面OCRの環境を確認中…</p>
+          </div>
+          <label class="switch-label">
+            <input type="checkbox" id="ocr-check" disabled />
+            <span>日英OCR</span>
+          </label>
+        </div>
+        <div class="ocr-options">
+          <label for="ocr-interval">フレーム抽出間隔</label>
+          <select id="ocr-interval" disabled>
+            <option value="3">3秒ごと</option>
+            <option value="5" selected>5秒ごと</option>
+            <option value="10">10秒ごと</option>
+            <option value="15">15秒ごと</option>
+          </select>
+          <span>同じ画面の文字は自動で重複除去します。</span>
+        </div>
+      </section>
+
+      <!-- 設定 -->
+      <section class="settings">
+        <div class="field">
+          <label for="model-select">モデル</label>
+          <select id="model-select"></select>
+        </div>
+        <div class="field">
+          <label for="lang-select">言語</label>
+          <select id="lang-select">
+            <option value="mixed" selected>自動(日英混在向け・区間ごとに判定)</option>
+            <option value="auto">自動(単一言語向け・高速)</option>
+            <option value="ja">日本語</option>
+            <option value="en">英語</option>
+            <option value="zh">中国語</option>
+            <option value="ko">韓国語</option>
+            <option value="es">スペイン語</option>
+            <option value="fr">フランス語</option>
+            <option value="de">ドイツ語</option>
+          </select>
+        </div>
+        <label class="field checkbox">
+          <input type="checkbox" id="translate-check" />
+          <span>英語に翻訳して出力</span>
+        </label>
+        <button class="primary" id="run-btn" disabled>文字起こしを開始</button>
+        <button class="ghost hidden" id="cancel-btn">キャンセル</button>
+      </section>
+
+      <!-- モデル管理 -->
+      <details class="model-manager" id="model-manager">
+        <summary>モデルの管理(ダウンロード / 削除)</summary>
+        <p class="mm-note">モデルは初回のみダウンロードが必要です。以降は完全オフラインで動作します。</p>
+        <ul class="model-list" id="model-list"></ul>
+      </details>
+
+      <!-- 履歴 -->
+      <details class="model-manager" id="history-panel">
+        <summary>履歴 <span class="seg-count" id="history-count"></span></summary>
+        <p class="mm-note">文字起こし結果は自動で保存されます。クリックで再表示できます。</p>
+        <ul class="model-list" id="history-list"></ul>
+      </details>
+
+      <!-- 進捗 -->
+      <section class="progress-strip hidden" id="progress-strip" aria-live="polite">
+        <div class="tape">
+          <div class="tape-fill" id="tape-fill"></div>
+          <div class="tape-wave" aria-hidden="true">
+            <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          </div>
+        </div>
+        <p class="progress-label" id="progress-label">準備中…</p>
+      </section>
+
+      <!-- 結果 -->
+      <section class="results hidden" id="results">
+        <div class="results-toolbar">
+          <h2>結果 <span class="seg-count" id="seg-count"></span></h2>
+          <div class="toolbar-actions">
+            <button class="ghost" id="copy-btn">コピー</button>
+            <button class="ghost" id="save-txt">TXT保存</button>
+            <button class="ghost" id="save-srt">SRT保存</button>
+            <button class="ghost" id="save-vtt">VTT保存</button>
+            <button class="primary" id="save-md">Markdownノート保存</button>
+          </div>
+        </div>
+        <ol class="segment-list" id="segment-list"></ol>
+      </section>
+    </main>
+
+    <div class="toast hidden" id="toast" role="status"></div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

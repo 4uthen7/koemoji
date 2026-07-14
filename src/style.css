@@ -1,0 +1,417 @@
+/* ============================================================
+   KoeMoji — ローカル文字起こし
+   ダークな録音スタジオ調。アクセントは録音ランプの琥珀色。
+   ============================================================ */
+
+:root {
+  --bg: #14161b;
+  --surface: #1c1f26;
+  --surface-2: #22262f;
+  --border: #2c3040;
+  --text: #e9e7e2;
+  --muted: #8f93a6;
+  --amber: #e8a33d;
+  --amber-soft: rgba(232, 163, 61, 0.14);
+  --danger: #e5484d;
+  --ok: #58b368;
+  --mono: "SFMono-Regular", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --sans: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic UI",
+    "Noto Sans JP", "Meiryo", system-ui, sans-serif;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.6;
+  height: 100%;
+}
+
+.hidden { display: none !important; }
+
+button {
+  font-family: inherit;
+  font-size: 13px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, opacity 0.15s;
+}
+button:hover:not(:disabled) { border-color: var(--amber); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button:focus-visible, select:focus-visible, .dropzone:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+
+button.primary {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: #1a1408;
+  font-weight: 700;
+  padding: 9px 22px;
+}
+button.primary:hover:not(:disabled) { background: #f0b45c; }
+
+button.ghost { background: transparent; }
+button.danger-text { color: var(--danger); background: transparent; border-color: transparent; }
+button.danger-text:hover:not(:disabled) { border-color: var(--danger); }
+
+select {
+  font-family: inherit;
+  font-size: 13px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  min-width: 160px;
+}
+
+/* ---------- ヘッダー ---------- */
+
+.app-header {
+  padding: 18px 28px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.wordmark { display: flex; align-items: baseline; gap: 10px; }
+
+.wordmark h1 {
+  font-family: var(--mono);
+  font-size: 19px;
+  letter-spacing: 0.14em;
+  font-weight: 700;
+}
+
+.lamp {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: #4a4f60;
+  align-self: center;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+.lamp.on {
+  background: var(--amber);
+  box-shadow: 0 0 10px 2px rgba(232, 163, 61, 0.55);
+  animation: lamp-pulse 1.6s ease-in-out infinite;
+}
+@keyframes lamp-pulse {
+  50% { box-shadow: 0 0 4px 1px rgba(232, 163, 61, 0.3); }
+}
+
+.tagline { color: var(--muted); font-size: 12px; }
+
+/* ---------- レイアウト ---------- */
+
+.app-main {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 22px 28px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* ---------- ドロップゾーン ---------- */
+
+.dropzone {
+  border: 1.5px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 34px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.dropzone:hover, .dropzone.dragover {
+  border-color: var(--amber);
+  background: var(--amber-soft);
+}
+.dropzone.has-file { border-style: solid; border-color: var(--amber); }
+
+.dz-icon { width: 30px; height: 30px; color: var(--muted); margin-bottom: 8px; }
+.dropzone.has-file .dz-icon, .dropzone.dragover .dz-icon { color: var(--amber); }
+.dz-title { font-weight: 600; word-break: break-all; }
+.dz-sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
+
+/* ---------- 設定行 ---------- */
+
+.settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px;
+}
+
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field label { font-size: 12px; color: var(--muted); }
+
+.field.checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+  padding-bottom: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.field.checkbox input { accent-color: var(--amber); width: 15px; height: 15px; }
+
+.settings .primary, .settings #cancel-btn { margin-left: auto; }
+
+/* ---------- 画面OCR ---------- */
+
+.ocr-panel {
+  background: linear-gradient(135deg, var(--surface), rgba(232, 163, 61, 0.07));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.ocr-heading, .ocr-options {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.ocr-heading h2 { font-size: 14px; }
+.ocr-heading p, .ocr-options span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.switch-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  cursor: pointer;
+  font-weight: 600;
+}
+.switch-label input { accent-color: var(--amber); width: 16px; height: 16px; }
+.ocr-options {
+  justify-content: flex-start;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.ocr-options label { color: var(--muted); font-size: 12px; }
+.ocr-options select { min-width: 112px; }
+
+/* ---------- モデル管理 ---------- */
+
+.model-manager {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 16px;
+}
+.model-manager summary {
+  cursor: pointer;
+  padding: 12px 0;
+  font-weight: 600;
+  color: var(--muted);
+  list-style-position: inside;
+}
+.model-manager[open] summary { color: var(--text); }
+.mm-note { color: var(--muted); font-size: 12px; padding-bottom: 10px; }
+
+.model-list { list-style: none; padding-bottom: 12px; display: flex; flex-direction: column; gap: 6px; }
+
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 12px;
+}
+.model-row .m-id { font-family: var(--mono); font-size: 13px; min-width: 128px; }
+.model-row .m-desc { color: var(--muted); font-size: 12px; flex: 1; }
+.model-row .m-size { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.model-row .m-state { font-size: 12px; }
+.model-row .m-state.downloaded { color: var(--ok); }
+
+.model-row .dl-progress {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+.model-row .dl-progress > div {
+  height: 100%;
+  width: 0%;
+  background: var(--amber);
+  transition: width 0.2s;
+}
+
+/* ---------- 履歴 ---------- */
+
+.history-row .h-name {
+  min-width: 0;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-empty {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px 2px 10px;
+}
+
+/* ---------- 進捗ストリップ(テープ風) ---------- */
+
+.progress-strip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.tape {
+  position: relative;
+  height: 34px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.tape-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0%;
+  background: linear-gradient(90deg, rgba(232,163,61,0.25), rgba(232,163,61,0.5));
+  transition: width 0.35s ease;
+}
+
+.tape-wave {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+.tape-wave i {
+  width: 3px;
+  height: 30%;
+  border-radius: 2px;
+  background: var(--amber);
+  opacity: 0.85;
+  animation: wave 1.1s ease-in-out infinite;
+}
+.tape-wave i:nth-child(2n) { animation-delay: 0.15s; }
+.tape-wave i:nth-child(3n) { animation-delay: 0.3s; }
+.tape-wave i:nth-child(4n) { animation-delay: 0.45s; }
+@keyframes wave {
+  0%, 100% { height: 22%; }
+  50% { height: 78%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tape-wave i { animation: none; height: 50%; }
+  .lamp.on { animation: none; }
+}
+
+.progress-label {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-family: var(--mono);
+}
+
+/* ---------- 結果 ---------- */
+
+.results {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.results-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.results-toolbar h2 { font-size: 14px; }
+.seg-count { color: var(--muted); font-weight: 400; font-size: 12px; }
+.toolbar-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.segment-list {
+  list-style: none;
+  max-height: 46vh;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.segment {
+  display: flex;
+  gap: 14px;
+  padding: 7px 16px;
+  border-bottom: 1px solid rgba(44, 48, 64, 0.5);
+}
+.segment:last-child { border-bottom: none; }
+.segment:hover { background: var(--surface-2); }
+
+.seg-time {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--amber);
+  white-space: nowrap;
+  padding-top: 2px;
+  user-select: all;
+}
+.seg-text { flex: 1; word-break: break-word; }
+.seg-source {
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.seg-source.speech { color: var(--amber); background: var(--amber-soft); }
+.seg-source.ocr { color: #8cc8ff; background: rgba(80, 160, 230, 0.12); }
+
+/* ---------- トースト ---------- */
+
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--amber);
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-size: 13px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  z-index: 10;
+  max-width: 80vw;
+}
+.toast.error { border-left-color: var(--danger); }
+
+/* ---------- レスポンシブ ---------- */
+
+@media (max-width: 640px) {
+  .app-main { padding: 16px 14px 48px; }
+  .settings .primary, .settings #cancel-btn { margin-left: 0; width: 100%; }
+  .model-row { flex-wrap: wrap; }
+  .segment { flex-direction: column; gap: 2px; }
+  .ocr-heading, .ocr-options { align-items: flex-start; flex-wrap: wrap; }
+}
