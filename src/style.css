@@ -415,3 +415,52 @@ select {
   .segment { flex-direction: column; gap: 2px; }
   .ocr-heading, .ocr-options { align-items: flex-start; flex-wrap: wrap; }
 }
+
+/* ---------- GPU パネル ---------- */
+
+.gpu-panel {
+  background: linear-gradient(135deg, var(--surface), rgba(118, 180, 110, 0.07));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.gpu-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.gpu-heading h2 { font-size: 14px; }
+.gpu-heading p { color: var(--muted); font-size: 12px; flex: 1; }
+.gpu-badge {
+  color: var(--ok);
+  font-weight: 700;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.gpu-progress {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.gpu-progress span {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.gpu-progress .dl-progress {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--border);
+  overflow: hidden;
+}
+.gpu-progress .dl-progress > div {
+  height: 100%;
+  width: 0%;
+  background: var(--ok);
+  transition: width 0.2s;
+}

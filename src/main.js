@@ -644,3 +644,66 @@ invoke("check_ocr_support")
     ocrSupportMessage = `画面OCRの確認に失敗しました: ${e}`;
     updateOcrControls(false);
   });
+
+// GPU
+refreshGpuSupport().catch(() => {});
+
+// ---------------------------------------------------------------
+// GPU アクセラレーション
+// ---------------------------------------------------------------
+const gpuPanel = $("gpu-panel");
+const gpuNote = $("gpu-note");
+const gpuEnableBtn = $("gpu-enable-btn");
+const gpuBadge = $("gpu-badge");
+const gpuProgress = $("gpu-progress");
+const gpuProgressFill = $("gpu-progress-fill");
+
+let gpuAvailable = false;
+let gpuDownloaded = false;
+
+async function refreshGpuSupport() {
+  try {
+    const support = await invoke("check_gpu_support");
+    gpuAvailable = support.cuda_available && support.cuda_runtime_installed;
+    gpuDownloaded = support.cuda_whisper_downloaded;
+    gpuNote.textContent = support.message;
+
+    if (gpuDownloaded) {
+      gpuEnableBtn.style.display = "none";
+      gpuBadge.style.display = "";
+    } else if (gpuAvailable) {
+      gpuEnableBtn.style.display = "";
+      gpuBadge.style.display = "none";
+    } else {
+      gpuEnableBtn.style.display = "none";
+      gpuBadge.style.display = "none";
+    }
+    gpuProgress.classList.add("hidden");
+  } catch (e) {
+    gpuNote.textContent = `GPU の確認に失敗しました: ${e}`;
+  }
+}
+
+gpuEnableBtn.addEventListener("click", async () => {
+  gpuEnableBtn.disabled = true;
+  gpuEnableBtn.textContent = "ダウンロード中…";
+  gpuProgress.classList.remove("hidden");
+  gpuProgressFill.style.width = "0%";
+  try {
+    await invoke("download_cuda_whisper");
+    showToast("GPU アクセラレーションが有効になりました");
+    await refreshGpuSupport();
+  } catch (e) {
+    showToast(String(e), true);
+    gpuEnableBtn.disabled = false;
+    gpuEnableBtn.textContent = "GPU を有効化";
+    gpuProgress.classList.add("hidden");
+  }
+});
+
+listen("gpu-download-progress", (event) => {
+  const { downloaded, total } = event.payload;
+  if (total > 0) {
+    gpuProgressFill.style.width = `${Math.floor((downloaded / total) * 100)}%`;
+  }
+});

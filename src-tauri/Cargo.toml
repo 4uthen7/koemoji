@@ -22,10 +22,10 @@ reqwest = { version = "0.12", default-features = false, features = [
     "stream",
 ] }
 symphonia = { version = "0.5", features = ["all"] }
-whisper-rs = { version = "0.16", features = ["cuda"] }
+whisper-rs = "0.16"
 
-# GPU アクセラレーション: デフォルトで CUDA (NVIDIA) 有効
-# CPU のみで動かす場合は features = [] に。macOS は features = ["metal"] に変更
+# GPU アクセラレーションはアプリ内から後付けで有効化できます（README 参照）
+
 
 [profile.release]
 lto = true

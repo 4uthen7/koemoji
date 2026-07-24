@@ -8,6 +8,7 @@ use whisper_rs::{
     WhisperContextParameters, WhisperState,
 };
 
+use crate::gpu;
 use crate::model;
 use crate::AppState;
 
@@ -84,7 +85,26 @@ pub async fn transcribe(
     let job_language = language.clone();
 
     // whisper.cpp の実行は重いのでブロッキングスレッドで行う
+    // GPU (CUDA) が利用可能ならそちらを使う
+    let use_gpu = gpu::is_cuda_available(&app);
+
     let segments = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<Segment>, String> {
+        // GPU パス: CUDA whisper-cli に任せる
+        if use_gpu {
+            let _ = app_handle.emit(
+                "transcribe-status",
+                StatusPayload { stage: "running".into() },
+            );
+            return gpu::transcribe_with_cuda(
+                &app_handle,
+                &job_path,
+                &model_path.to_string_lossy(),
+                &job_language,
+                translate,
+                &cancel,
+            );
+        }
+
         // 1. デコード
         let _ = app_handle.emit(
             "transcribe-status",

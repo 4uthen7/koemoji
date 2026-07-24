@@ -53,6 +53,22 @@
         </div>
       </section>
 
+
+      <!-- GPU アクセラレーション -->
+      <section class="gpu-panel" aria-labelledby="gpu-title" id="gpu-panel">
+        <div class="gpu-heading">
+          <div>
+            <h2 id="gpu-title">GPU アクセラレーション</h2>
+            <p id="gpu-note">GPU環境を確認中…</p>
+          </div>
+          <button class="primary" id="gpu-enable-btn" style="display:none">GPU を有効化</button>
+          <span id="gpu-badge" class="gpu-badge" style="display:none">✓ GPU 有効</span>
+        </div>
+        <div class="gpu-progress hidden" id="gpu-progress">
+          <div class="dl-progress"><div id="gpu-progress-fill"></div></div>
+          <span>CUDA エンジンをダウンロード中…</span>
+        </div>
+      </section>
       <!-- 設定 -->
       <section class="settings">
         <div class="field">

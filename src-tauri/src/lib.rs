@@ -1,4 +1,5 @@
 mod audio;
+mod gpu;
 mod history;
 mod model;
 mod ocr;
@@ -64,6 +65,8 @@ pub fn run() {
             ocr_snapshots: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
+            gpu::check_gpu_support,
+            gpu::download_cuda_whisper,
             model::list_models,
             model::download_model,
             model::delete_model,
