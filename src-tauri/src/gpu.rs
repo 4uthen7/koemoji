@@ -2,7 +2,7 @@
 // gpu.rs — GPU 検出 + whisper-cli-gpu の実行（build.rs が自動生成）
 
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -199,7 +199,8 @@ struct WhisperCliSegment { from: String, to: String, text: String }
 
 fn parse_timecode(tc: &str) -> i64 {
     if let Ok(s) = tc.parse::<f64>() { return (s * 1000.0) as i64; }
-    let parts: Vec<&str> = tc.replace(',', ".").split(':').collect();
+    let cleaned = tc.replace(',', ".");
+    let parts: Vec<&str> = cleaned.split(':').collect();
     if parts.len() == 3 {
         let h: i64 = parts[0].parse().unwrap_or(0);
         let m: i64 = parts[1].parse().unwrap_or(0);

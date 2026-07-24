@@ -10,7 +10,6 @@ use whisper_rs::{
     WhisperContextParameters, WhisperState,
 };
 
-use crate::gpu;
 use crate::model;
 use crate::AppState;
 
