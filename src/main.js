@@ -677,17 +677,25 @@ listen("file-opened", (event) => {
 // ---------------------------------------------------------------
 const gpuNote = $("gpu-note");
 const gpuBadge = $("gpu-badge");
+const gpuCheck = $("gpu-check");
+const gpuSwitchLabel = $("gpu-switch-label");
+
+let gpuSupported = false;
 
 async function refreshGpuSupport() {
   try {
     const support = await invoke("check_gpu_support");
+    gpuSupported = support.gpu_cli_found;
     gpuBadge.style.display = "none";
+    gpuSwitchLabel.style.display = "none";
 
     if (support.gpu_cli_found) {
       gpuBadge.style.display = "";
-      gpuNote.textContent = "GPU アクセラレーション有効（whisper_cuda.dll 検出）";
+      gpuSwitchLabel.style.display = "";
+      gpuCheck.checked = true;
+      gpuNote.textContent = "GPU アクセラレーション有効";
     } else if (support.gpu_available) {
-      gpuNote.textContent = "NVIDIA GPU + CUDA を検出。whisper_cuda.dll をビルドしてください。";
+      gpuNote.textContent = "GPU を検出。ビルド時に whisper-cli-gpu が生成されます。";
     } else {
       gpuNote.textContent = "GPU は検出されませんでした（CPU で動作します）。";
     }
@@ -695,3 +703,7 @@ async function refreshGpuSupport() {
     gpuNote.textContent = `確認に失敗: ${e}`;
   }
 }
+
+gpuCheck.addEventListener("change", () => {
+  gpuBadge.style.display = gpuCheck.checked ? "" : "none";
+});
