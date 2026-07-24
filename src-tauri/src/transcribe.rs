@@ -89,7 +89,6 @@ pub async fn transcribe(
     // GPU (CUDA) が利用可能ならそちらを使う
 
     let segments = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<Segment>, String> {
-        // ---- 音声文字起こし ----
         // --- 音声文字起こし ---
         let use_gpu = crate::gpu::is_gpu_available();
         let mut segments = if use_gpu {

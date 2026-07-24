@@ -2,7 +2,7 @@
 // gpu.rs — GPU 検出 + whisper-cli-gpu の実行（build.rs が自動生成）
 
 use std::fs;
-use std::io::{BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,7 +24,7 @@ pub struct GpuSupport {
 #[tauri::command]
 pub fn check_gpu_support() -> GpuSupport {
     let gpu_available = detect_gpu() && check_gpu_runtime();
-    let cli_found = find_whisper_cli_cuda().is_some();
+    let cli_found = find_whisper_cli_gpu().is_some();
 
     let message = if cli_found {
         "GPU アクセラレーション有効".into()
@@ -38,11 +38,11 @@ pub fn check_gpu_support() -> GpuSupport {
 }
 
 pub fn is_gpu_available() -> bool {
-    find_whisper_cli_cuda().is_some()
+    find_whisper_cli_gpu().is_some()
 }
 
 /// whisper-cli-gpu.exe を探す。
-fn find_whisper_cli_cuda() -> Option<PathBuf> {
+fn find_whisper_cli_gpu() -> Option<PathBuf> {
     let name = if cfg!(target_os = "windows") { "whisper-cli-gpu.exe" }
         else { "whisper-cli-gpu" };
 
@@ -72,14 +72,14 @@ fn find_whisper_cli_cuda() -> Option<PathBuf> {
 /// whisper-cli-gpu で文字起こし。
 /// WAV に変換してから渡す（whisper-cli は WAV のみ対応）。
 pub fn transcribe_with_gpu(
-    _app: &AppHandle,
+    app: &AppHandle,
     audio_path: &str,
     model_path: &str,
     language: &str,
     translate: bool,
     cancel: &Arc<AtomicBool>,
 ) -> Result<Vec<Segment>, String> {
-    let cli = find_whisper_cli_cuda()
+    let cli = find_whisper_cli_gpu()
         .ok_or("whisper-cli-gpu が見つかりません。build.rs が生成しているか確認してください。")?;
 
     // 音声デコード → 一時WAV
@@ -103,9 +103,108 @@ pub fn transcribe_with_gpu(
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
 
-    let mut reader = BufReader::new(stdout);
-    let mut raw = String::new();
-    reader.read_to_string(&mut raw).map_err(|e| format!("出力読み取りエラー: {e}"))?;
+    // 別スレッドで stdout を読み取り、チャネルで送る
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    let cancel_flag = cancel.clone();
+    std::thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            if cancel_flag.load(Ordering::SeqCst) { break; }
+            if let Ok(line) = line {
+                if tx.send(line).is_err() { break; }
+            }
+        }
+    });
+
+    let mut segments = Vec::new();
+    let mut raw_err = String::new();
+    let mut stderr_reader = BufReader::new(stderr);
+
+    // ポーリングループ: stdout 行を処理しつつキャンセルをチェック
+    loop {
+        if cancel.load(Ordering::SeqCst) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = fs::remove_file(&wav_path);
+            return Err("キャンセルされました".into());
+        }
+
+        match rx.recv_timeout(std::time::Duration::from_millis(200)) {
+            Ok(line) => {
+                let line = line.trim().to_string();
+                if line.is_empty() { continue; }
+
+                // パターンA: フルJSON配列1行
+                if let Ok(items) = serde_json::from_str::<Vec<WhisperCliItem>>(&line) {
+                    for item in items {
+                        let text = item.text.trim().to_string();
+                        if text.is_empty() { continue; }
+                        let seg = Segment {
+                            start_ms: parse_timecode(&item.timestamps.from),
+                            end_ms: parse_timecode(&item.timestamps.to),
+                            text,
+                            source: "speech".into(),
+                        };
+                        let _ = app.emit("transcribe-segment", seg.clone());
+                        segments.push(seg);
+                    }
+                }
+                // パターンB: 1セグメント1行
+                else if let Ok(s) = serde_json::from_str::<WhisperCliSegment>(&line) {
+                    let text = s.text.trim().to_string();
+                    if text.is_empty() { continue; }
+                    let seg = Segment {
+                        start_ms: parse_timecode(&s.from),
+                        end_ms: parse_timecode(&s.to),
+                        text,
+                        source: "speech".into(),
+                    };
+                    let _ = app.emit("transcribe-segment", seg.clone());
+                    segments.push(seg);
+                }
+                // パターンC: フルJSONオブジェクト（transcriptionキーあり）
+                else if let Ok(full) = serde_json::from_str::<WhisperCliFull>(&line) {
+                    for item in full.transcription {
+                        let text = item.text.trim().to_string();
+                        if text.is_empty() { continue; }
+                        let seg = Segment {
+                            start_ms: parse_timecode(&item.timestamps.from),
+                            end_ms: parse_timecode(&item.timestamps.to),
+                            text,
+                            source: "speech".into(),
+                        };
+                        let _ = app.emit("transcribe-segment", seg.clone());
+                        segments.push(seg);
+                    }
+                }
+                // stderr からのプログレス行（数値のみ）
+                else if let Ok(pct) = line.parse::<i32>() {
+                    let _ = app.emit("transcribe-progress", pct.min(100));
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                // stdout が詰まってる間、stderr を読む（プログレス用）
+                let mut buf = String::new();
+                if stderr_reader.read_line(&mut buf).unwrap_or(0) > 0 {
+                    raw_err.push_str(&buf);
+                    // プログレス行を探す
+                    for word in buf.split_whitespace() {
+                        if let Ok(pct) = word.trim_end_matches('%').parse::<i32>() {
+                            let _ = app.emit("transcribe-progress", pct.min(100));
+                        }
+                    }
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                break; // stdout スレッド終了
+            }
+        }
+    }
+
+    // 残りの stderr を読む
+    let mut buf = String::new();
+    stderr_reader.read_to_string(&mut buf).ok();
+    raw_err.push_str(&buf);
 
     let status = child.wait().map_err(|e| format!("プロセス待機エラー: {e}"))?;
     let _ = fs::remove_file(&wav_path);
@@ -113,46 +212,15 @@ pub fn transcribe_with_gpu(
     if cancel.load(Ordering::SeqCst) { return Err("キャンセルされました".into()); }
 
     if !status.success() {
-        let mut err_reader = BufReader::new(stderr);
-        let mut err_str = String::new();
-        err_reader.read_to_string(&mut err_str).ok();
         return Err(format!(
             "whisper-cli-gpu 異常終了 (exit: {})\n{}",
             status.code().unwrap_or(-1),
-            err_str.trim()
+            raw_err.trim()
         ));
     }
 
-    let mut segments = Vec::new();
-
-    // パターンA: フルJSON
-    if let Ok(full) = serde_json::from_str::<WhisperCliFull>(&raw) {
-        for item in full.transcription {
-            let text = item.text.trim().to_string();
-            if text.is_empty() { continue; }
-            segments.push(Segment {
-                start_ms: parse_timecode(&item.timestamps.from),
-                end_ms: parse_timecode(&item.timestamps.to),
-                text,
-                source: "speech".into(),
-            });
-        }
-    } else {
-        // パターンB: 1行ずつ
-        for line in raw.lines() {
-            let line = line.trim();
-            if line.is_empty() { continue; }
-            if let Ok(s) = serde_json::from_str::<WhisperCliSegment>(line) {
-                let text = s.text.trim().to_string();
-                if text.is_empty() { continue; }
-                segments.push(Segment {
-                    start_ms: parse_timecode(&s.from),
-                    end_ms: parse_timecode(&s.to),
-                    text,
-                    source: "speech".into(),
-                });
-            }
-        }
+    if segments.is_empty() {
+        return Err("文字起こし結果が空です。モデルが正しいか確認してください。".into());
     }
 
     Ok(segments)
