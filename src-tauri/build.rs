@@ -60,12 +60,12 @@ fn build_whisper_gpu(backend: &str) {
     let status = Command::new("cmake")
         .args(["--build", build_dir.to_str().unwrap(),
                "--config", "Release",
-               "--target", "main",
+               "--target", "whisper-cli",
                "--parallel"])
         .status().expect("cmake build failed");
     if !status.success() { panic!("cmake build failed"); }
 
-    let exe_name = if cfg!(target_os = "windows") { "main.exe" } else { "main" };
+    let exe_name = if cfg!(target_os = "windows") { "whisper-cli.exe" } else { "whisper-cli" };
     let candidates = [
         build_dir.join("bin").join("Release").join(exe_name),
         build_dir.join("bin").join(exe_name),
