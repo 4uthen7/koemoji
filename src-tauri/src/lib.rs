@@ -87,6 +87,7 @@ pub fn run() {
         .setup(|app| {
             // ファイルが指定されてる場合、ウィンドウ表示後にイベントを飛ばす
             let handle = app.handle().clone();
+            let thread_handle = handle.clone();
             let state = handle.state::<AppState>();
             if let Ok(guard) = state.opened_file.lock() {
                 if let Some(ref path) = *guard {
@@ -95,7 +96,7 @@ pub fn run() {
                     // 少し遅延させてWebView準備を待つ
                     std::thread::spawn(move || {
                         std::thread::sleep(std::time::Duration::from_millis(500));
-                        let _ = handle.emit("file-opened", path);
+                        let _ = thread_handle.emit("file-opened", path);
                     });
                 }
             }
