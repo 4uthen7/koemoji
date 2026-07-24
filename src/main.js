@@ -500,6 +500,7 @@ async function refreshHistory() {
         currentBaseName = baseName(entry.file_name);
         currentSourceName = entry.file_name;
         renderSegments();
+        $("save-ocr-text").style.display = "none"; // 履歴から読み込んだ場合はOCR累積テキストは非表示
         resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
       } catch (e) {
         showToast(String(e), true);
@@ -551,6 +552,8 @@ function renderSegments() {
   }
   segCount.textContent = `${segments.length} セグメント`;
   resultsSection.classList.remove("hidden");
+  const hasOcr = segments.some(s => s.source === "ocr");
+  $("save-ocr-text").style.display = hasOcr ? "" : "none";
 }
 
 // 実行中: セグメントが確定するたびにリアルタイムで追記する
@@ -604,6 +607,26 @@ $("save-txt").addEventListener("click", () => saveAs("txt", toTxt()));
 $("save-srt").addEventListener("click", () => saveAs("srt", toSrt()));
 $("save-vtt").addEventListener("click", () => saveAs("vtt", toVtt()));
 $("save-md").addEventListener("click", () => saveAs("md", toMarkdown()));
+
+// OCR 累積テキストの保存
+$("save-ocr-text").addEventListener("click", async () => {
+  try {
+    const result = await invoke("get_cumulative_ocr_text");
+    if (!result.available) {
+      showToast("OCR累積テキストはありません（OCRが未実行、または動画以外のファイルです）", true);
+      return;
+    }
+    const path = await save({
+      defaultPath: `${currentBaseName}_ocr_slides.txt`,
+      filters: [{ name: "TXT", extensions: ["txt"] }],
+    });
+    if (!path) return;
+    await invoke("save_text_file", { path, content: result.text });
+    showToast(`${fileName(path)} に保存しました`);
+  } catch (e) {
+    showToast(String(e), true);
+  }
+});
 
 // ---------------------------------------------------------------
 // 初期化

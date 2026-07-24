@@ -15,6 +15,15 @@ use crate::transcribe::Segment;
 
 const OCR_LANGUAGES: &str = "jpn+eng";
 
+/// OCR の1スナップショット（フレーム間隔ごとに記録）。
+/// 累積テキスト出力と、スライド切り替えの検出に使う。
+#[derive(Serialize, Clone)]
+pub struct OcrSnapshot {
+    pub start_ms: i64,
+    pub text: String,
+    pub is_new_slide: bool,
+}
+
 #[derive(Serialize)]
 pub struct OcrSupport {
     pub available: bool,
@@ -108,7 +117,7 @@ pub fn extract_text_segments(
     input_path: &str,
     interval_secs: u32,
     cancel: &Arc<AtomicBool>,
-) -> Result<Vec<Segment>, String> {
+) -> Result<(Vec<Segment>, Vec<OcrSnapshot>), String> {
     let interval_secs = interval_secs.clamp(1, 60);
     let ffmpeg = find_executable("ffmpeg")
         .ok_or_else(|| "ffmpeg が見つかりません。画面OCRを利用できません。".to_string())?;
@@ -158,7 +167,7 @@ pub fn extract_text_segments(
 
     // 音声だけのファイルには映像ストリームがないため、OCR結果なしで正常終了する。
     if frames.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
 
     let _ = app.emit(
@@ -169,6 +178,7 @@ pub fn extract_text_segments(
     );
 
     let mut segments = Vec::new();
+    let mut snapshots: Vec<OcrSnapshot> = Vec::new();
     let mut previous_lines: Vec<String> = Vec::new();
     let total = frames.len();
 
@@ -199,11 +209,18 @@ pub fn extract_text_segments(
 
         if !novel_lines.is_empty() {
             let start_ms = index as i64 * interval_secs as i64 * 1000;
+            let is_new_slide = novel_lines.len() == current_lines.len()
+                || (novel_lines.len() * 2 > current_lines.len());
             segments.push(Segment {
                 start_ms,
                 end_ms: start_ms + interval_secs as i64 * 1000,
                 text: novel_lines.join("\n"),
                 source: "ocr".into(),
+            });
+            snapshots.push(OcrSnapshot {
+                start_ms,
+                text: if is_new_slide { current_lines.join("\n") } else { novel_lines.join("\n") },
+                is_new_slide,
             });
         }
 
@@ -211,7 +228,7 @@ pub fn extract_text_segments(
         let _ = app.emit("transcribe-progress", progress);
     }
 
-    Ok(segments)
+    Ok((segments, snapshots))
 }
 
 fn clean_lines(text: &str) -> Vec<String> {
@@ -284,6 +301,92 @@ fn levenshtein(a: &str, b: &str) -> usize {
         std::mem::swap(&mut previous, &mut current);
     }
     previous[b.len()]
+}
+
+/// 累積 OCR テキストを Markdown 調の読みやすい形式に整形する。
+/// スライド切り替え時は区切りを入れて全文を、差分のみのときは追加行だけを表示する。
+pub fn format_cumulative_ocr_text(
+    snapshots: &[OcrSnapshot],
+    source_name: &str,
+) -> String {
+    let generated_at = chrono_now();
+    let mut out = String::new();
+    out.push_str(&format!("# OCR Slide Text: {source_name}\n"));
+    out.push_str(&format!("# Generated: {generated_at}\n"));
+    out.push_str("\n---\n\n");
+
+    for snap in snapshots {
+        let secs = snap.start_ms / 1000;
+        let h = secs / 3600;
+        let m = (secs % 3600) / 60;
+        let s = secs % 60;
+        let ts = format!("{h:02}:{m:02}:{s:02}");
+
+        if snap.is_new_slide {
+            out.push_str(&format!("## [{ts}] ← Slide\n"));
+            for line in snap.text.lines() {
+                out.push_str(&format!("{line}\n"));
+            }
+        } else {
+            out.push_str(&format!("## [{ts}] +\n"));
+            for line in snap.text.lines() {
+                out.push_str(&format!("+ {line}\n"));
+            }
+        }
+        out.push_str("\n---\n\n");
+    }
+
+    out
+}
+
+
+
+fn chrono_now() -> String {
+    use std::time::SystemTime;
+    let dur = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let total_secs = dur.as_secs() as i64 + 9 * 3600; // JST
+    let ss = total_secs % 60;
+    let total_mins = total_secs / 60;
+    let mm = total_mins % 60;
+    let total_hours = total_mins / 60;
+    let hh = total_hours % 24;
+    let total_days = total_hours / 24;
+
+    // 年を計算（うるう年対応）
+    let mut y = 1970i64;
+    let mut remaining = total_days;
+    loop {
+        let days_in_year = if is_leap(y) { 366 } else { 365 };
+        if remaining < days_in_year {
+            break;
+        }
+        remaining -= days_in_year;
+        y += 1;
+    }
+
+    let mon_lengths = if is_leap(y) {
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+
+    let mut mon = 1usize;
+    for &days in mon_lengths.iter() {
+        if remaining < days {
+            break;
+        }
+        remaining -= days;
+        mon += 1;
+    }
+    let d = remaining + 1;
+
+    format!("{y:04}-{mon:02}-{d:02} {hh:02}:{mm:02}:{ss:02}")
+}
+
+fn is_leap(y: i64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0)
 }
 
 struct TempFramesDir(PathBuf);

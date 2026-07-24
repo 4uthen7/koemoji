@@ -156,12 +156,19 @@ pub async fn transcribe(
         };
 
         if ocr_enabled {
-            let mut ocr_segments = crate::ocr::extract_text_segments(
+            let (mut ocr_segments, ocr_snapshots) = crate::ocr::extract_text_segments(
                 &app_handle,
                 &job_path,
                 ocr_interval_secs,
                 &cancel,
             )?;
+            // 累積 OCR テキストを AppState に保存（フロントから取得できるように）
+            app_handle
+                .state::<crate::AppState>()
+                .ocr_snapshots
+                .lock()
+                .map_err(|e| format!("内部エラー: {e}"))?
+                .replace(Some((ocr_snapshots, job_path.clone())));
             let _ = app_handle.emit(
                 "transcribe-status",
                 StatusPayload { stage: "merging".into() },

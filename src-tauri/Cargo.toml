@@ -22,10 +22,10 @@ reqwest = { version = "0.12", default-features = false, features = [
     "stream",
 ] }
 symphonia = { version = "0.5", features = ["all"] }
-whisper-rs = "0.16"
+whisper-rs = { version = "0.16", features = ["cuda"] }
 
-# GPU を使う場合は whisper-rs の features を切り替える(README 参照)
-# 例: whisper-rs = { version = "0.16", features = ["cuda"] }
+# GPU アクセラレーション: デフォルトで CUDA (NVIDIA) 有効
+# CPU のみで動かす場合は features = [] に。macOS は features = ["metal"] に変更
 
 [profile.release]
 lto = true
