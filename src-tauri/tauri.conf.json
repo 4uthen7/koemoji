@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "KoeMoji — ローカル文字起こし",
+        "title": "KoeMoji — Dev 高本 4uthent / tkmt_wonderkid",
         "width": 940,
         "height": 760,
         "minWidth": 720,
@@ -36,12 +36,28 @@
     ],
     "fileAssociations": [
       {
-        "ext": ["mp3", "wav", "m4a", "aac", "flac", "ogg", "aiff"],
+        "ext": [
+          "mp3",
+          "wav",
+          "m4a",
+          "aac",
+          "flac",
+          "ogg",
+          "aiff"
+        ],
         "name": "KoeMoji Audio",
         "description": "音声ファイルを KoeMoji で文字起こし"
       },
       {
-        "ext": ["mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv"],
+        "ext": [
+          "mp4",
+          "m4v",
+          "mov",
+          "mkv",
+          "webm",
+          "avi",
+          "wmv"
+        ],
         "name": "KoeMoji Video",
         "description": "動画ファイルを KoeMoji で文字起こし"
       }

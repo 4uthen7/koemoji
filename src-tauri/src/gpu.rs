@@ -300,44 +300,68 @@ fn parse_timecode(tc: &str) -> i64 {
 
 /// NVIDIA GPU + CUDA ドライバが存在するか。
 fn detect_cuda() -> bool {
-    // nvidia-smi が使えるか
-    if let Ok(output) = Command::new("nvidia-smi").output() {
-        if output.status.success() {
-            return true;
-        }
+    // nvidia-smi（PATH にない場合もあるので System32 も見る）
+    if Command::new("nvidia-smi").output().map(|o| o.status.success()).unwrap_or(false) {
+        return true;
     }
-    // Windows: NVML の存在チェック
     #[cfg(target_os = "windows")]
     {
-        if std::path::Path::new("C:\\Windows\\System32\\nvml.dll").exists()
-            || std::path::Path::new("C:\\Windows\\System32\\nvcuda.dll").exists()
-        {
+        if PathBuf::from("C:\\Windows\\System32\\nvidia-smi.exe").exists() {
+            if Command::new("C:\\Windows\\System32\\nvidia-smi.exe")
+                .output().map(|o| o.status.success()).unwrap_or(false)
+            {
+                return true;
+            }
+        }
+    }
+    // ドライバ DLL を直接確認
+    #[cfg(target_os = "windows")]
+    {
+        let sys32 = PathBuf::from("C:\\Windows\\System32");
+        if sys32.join("nvml.dll").exists() || sys32.join("nvcuda.dll").exists() {
             return true;
         }
     }
     false
 }
 
-/// CUDA Toolkit ランタイムがインストールされているか。
+/// CUDA ランタイムが利用可能か（whisper-cli-cuda.exe の実行に必要な DLL があるか）。
+/// nvcc（コンパイラ）は不要。ドライバ付属のランタイムDLLだけでOK。
 fn check_cuda_runtime() -> bool {
-    // nvcc が使えるか
-    if let Ok(output) = Command::new("nvcc").arg("--version").output() {
-        if output.status.success() {
-            return true;
-        }
-    }
-    // Windows: CUDA ランタイム DLL の存在
     #[cfg(target_os = "windows")]
     {
-        let candidates = [
-            "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA",
-            "C:\\Program Files\\NVIDIA Corporation\\NvStreamSrv",
-        ];
-        for c in &candidates {
-            if std::path::Path::new(c).exists() {
-                return true;
+        let sys32 = PathBuf::from("C:\\Windows\\System32");
+        // nvcuda.dll = CUDA Driver API
+        if sys32.join("nvcuda.dll").exists() {
+            return true;
+        }
+        // cudart64_*.dll = CUDA Runtime
+        if let Ok(entries) = std::fs::read_dir(&sys32) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy().to_lowercase();
+                if name.starts_with("cudart64_") && name.ends_with(".dll") {
+                    return true;
+                }
+                if name.starts_with("cublas64_") && name.ends_with(".dll") {
+                    return true;
+                }
             }
         }
+        // CUDA Toolkit のパスも一応見る
+        if let Ok(dirs) = std::fs::read_dir("C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA") {
+            for d in dirs.flatten() {
+                let bin = d.path().join("bin");
+                if bin.exists() {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
-    false
+    #[cfg(not(target_os = "windows"))]
+    {
+        Command::new("nvidia-smi").output().map(|o| o.status.success()).unwrap_or(false)
+    }
 }
+
