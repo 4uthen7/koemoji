@@ -2,11 +2,12 @@
 // gpu.rs — CUDA 検出 + whisper-cli-cuda.exe の実行（build.rs が自動生成）
 
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use tauri::AppHandle;
@@ -69,8 +70,9 @@ fn find_whisper_cli_cuda() -> Option<PathBuf> {
 }
 
 /// whisper-cli-cuda.exe で文字起こし。
+/// 音声を一時 WAV に変換してから渡す（whisper-cli は WAV 入力のみ対応のため）。
 pub fn transcribe_with_cuda(
-    app: &AppHandle,
+    _app: &AppHandle,
     audio_path: &str,
     model_path: &str,
     language: &str,
@@ -78,34 +80,47 @@ pub fn transcribe_with_cuda(
     cancel: &Arc<AtomicBool>,
 ) -> Result<Vec<Segment>, String> {
     let cli = find_whisper_cli_cuda()
-        .ok_or("whisper-cli-cuda.exe が見つかりません。nvcc をインストールして再ビルドしてください。")?;
+        .ok_or("whisper-cli-cuda.exe が見つかりません。")?;
+
+    // 音声デコード → 一時WAV
+    let samples = crate::audio::decode_to_mono_16k(audio_path)?;
+    if cancel.load(Ordering::SeqCst) { return Err("キャンセルされました".into()); }
+    let wav_path = write_temp_wav(&samples)?;
 
     let mut cmd = Command::new(&cli);
     cmd.arg("-m").arg(model_path);
-    cmd.arg("-f").arg(audio_path);
+    cmd.arg("-f").arg(&wav_path);
     cmd.arg("-l").arg(language);
     cmd.arg("--output-json");
     if translate { cmd.arg("--translate"); }
 
     let mut child = cmd
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("whisper-cli-cuda の起動に失敗: {e}"))?;
 
     let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+
     let mut reader = BufReader::new(stdout);
     let mut raw = String::new();
     reader.read_to_string(&mut raw).map_err(|e| format!("出力読み取りエラー: {e}"))?;
 
-    if cancel.load(Ordering::SeqCst) {
-        let _ = child.kill(); let _ = child.wait();
-        return Err("キャンセルされました".into());
-    }
-
     let status = child.wait().map_err(|e| format!("プロセス待機エラー: {e}"))?;
+    let _ = fs::remove_file(&wav_path);
+
+    if cancel.load(Ordering::SeqCst) { return Err("キャンセルされました".into()); }
+
     if !status.success() {
-        return Err("whisper-cli-cuda が異常終了しました".into());
+        let mut err_reader = BufReader::new(stderr);
+        let mut err_str = String::new();
+        err_reader.read_to_string(&mut err_str).ok();
+        return Err(format!(
+            "whisper-cli-cuda 異常終了 (exit: {})\n{}",
+            status.code().unwrap_or(-1),
+            err_str.trim()
+        ));
     }
 
     let mut segments = Vec::new();
@@ -142,6 +157,36 @@ pub fn transcribe_with_cuda(
 
     Ok(segments)
 }
+
+/// 16kHz mono f32 → 一時WAVファイル
+fn write_temp_wav(samples: &[f32]) -> Result<PathBuf, String> {
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)
+        .map_err(|e| format!("時刻取得失敗: {e}"))?.as_nanos();
+    let path = std::env::temp_dir().join(format!("koemoji-gpu-{nonce}.wav"));
+    let mut file = fs::File::create(&path).map_err(|e| format!("WAV作成失敗: {e}"))?;
+    let data_len = (samples.len() * 2) as u32;
+    let riff_size = 36u32.wrapping_add(data_len);
+    file.write_all(b"RIFF").ok();
+    file.write_all(&riff_size.to_le_bytes()).ok();
+    file.write_all(b"WAVE").ok();
+    file.write_all(b"fmt ").ok();
+    file.write_all(&16u32.to_le_bytes()).ok();
+    file.write_all(&1u16.to_le_bytes()).ok();
+    file.write_all(&1u16.to_le_bytes()).ok();
+    file.write_all(&16000u32.to_le_bytes()).ok();
+    file.write_all(&32000u32.to_le_bytes()).ok();
+    file.write_all(&2u16.to_le_bytes()).ok();
+    file.write_all(&16u16.to_le_bytes()).ok();
+    file.write_all(b"data").ok();
+    file.write_all(&data_len.to_le_bytes()).ok();
+    for &s in samples {
+        let v = (s * 32767.0).round().clamp(-32768.0, 32767.0) as i16;
+        file.write_all(&v.to_le_bytes()).map_err(|e| format!("WAV書込失敗: {e}"))?;
+    }
+    file.flush().ok();
+    Ok(path)
+}
+
 
 #[derive(serde::Deserialize)]
 struct WhisperCliFull { transcription: Vec<WhisperCliItem> }
