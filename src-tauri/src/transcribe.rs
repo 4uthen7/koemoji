@@ -190,7 +190,7 @@ pub async fn transcribe(
                 .ocr_snapshots
                 .lock()
                 .map_err(|e| format!("内部エラー: {e}"))?
-                .replace(Some((ocr_snapshots, job_path.clone())));
+                .replace((ocr_snapshots, job_path.clone()));
             let _ = app_handle.emit(
                 "transcribe-status",
                 StatusPayload { stage: "merging".into() },
