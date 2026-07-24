@@ -1,5 +1,5 @@
 // @4uthent / tkmt_wonderkid
-// gpu.rs — CUDA 検出 + whisper-cli-cuda.exe の実行（build.rs が自動生成）
+// gpu.rs — GPU 検出 + whisper-cli-gpu の実行（build.rs が自動生成）
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -16,38 +16,38 @@ use crate::transcribe::Segment;
 
 #[derive(Serialize, Clone)]
 pub struct GpuSupport {
-    pub cuda_available: bool,
-    pub cuda_cli_found: bool,
+    pub gpu_available: bool,
+    pub gpu_cli_found: bool,
     pub message: String,
 }
 
 #[tauri::command]
 pub fn check_gpu_support() -> GpuSupport {
-    let cuda_available = detect_cuda() && check_cuda_runtime();
+    let gpu_available = detect_gpu() && check_gpu_runtime();
     let cli_found = find_whisper_cli_cuda().is_some();
 
     let message = if cli_found {
-        "GPU アクセラレーション有効（whisper-cli-cuda.exe 検出）".into()
-    } else if cuda_available {
-        "NVIDIA GPU + CUDA を検出。build.rs が whisper-cli-cuda.exe を自動生成します。".into()
+        "GPU アクセラレーション有効".into()
+    } else if gpu_available {
+        "GPU を検出。build.rs が whisper-cli-gpu を自動生成します。".into()
     } else {
-        "GPU は検出されませんでした（CPU で動作します）。".into()
+        "GPU は検出されませんでした（CPU で動作します）".into()
     };
 
-    GpuSupport { cuda_available, cuda_cli_found: cli_found, message }
+    GpuSupport { gpu_available, gpu_cli_found: cli_found, message }
 }
 
-pub fn is_cuda_available() -> bool {
+pub fn is_gpu_available() -> bool {
     find_whisper_cli_cuda().is_some()
 }
 
-/// whisper-cli-cuda.exe を探す。
+/// whisper-cli-gpu.exe を探す。
 fn find_whisper_cli_cuda() -> Option<PathBuf> {
-    let name = if cfg!(target_os = "windows") { "whisper-cli-cuda.exe" }
-        else { "whisper-cli-cuda" };
+    let name = if cfg!(target_os = "windows") { "whisper-cli-gpu.exe" }
+        else { "whisper-cli-gpu" };
 
     // ビルド時に生成されたパス（環境変数）
-    if let Ok(path) = std::env::var("WHISPER_CLI_CUDA") {
+    if let Ok(path) = std::env::var("WHISPER_CLI_GPU") {
         let p = PathBuf::from(&path);
         if p.exists() { return Some(p); }
     }
@@ -69,9 +69,9 @@ fn find_whisper_cli_cuda() -> Option<PathBuf> {
     None
 }
 
-/// whisper-cli-cuda.exe で文字起こし。
-/// 音声を一時 WAV に変換してから渡す（whisper-cli は WAV 入力のみ対応のため）。
-pub fn transcribe_with_cuda(
+/// whisper-cli-gpu で文字起こし。
+/// WAV に変換してから渡す（whisper-cli は WAV のみ対応）。
+pub fn transcribe_with_gpu(
     _app: &AppHandle,
     audio_path: &str,
     model_path: &str,
@@ -80,7 +80,7 @@ pub fn transcribe_with_cuda(
     cancel: &Arc<AtomicBool>,
 ) -> Result<Vec<Segment>, String> {
     let cli = find_whisper_cli_cuda()
-        .ok_or("whisper-cli-cuda.exe が見つかりません。")?;
+        .ok_or("whisper-cli-gpu が見つかりません。build.rs が生成しているか確認してください。")?;
 
     // 音声デコード → 一時WAV
     let samples = crate::audio::decode_to_mono_16k(audio_path)?;
@@ -98,7 +98,7 @@ pub fn transcribe_with_cuda(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("whisper-cli-cuda の起動に失敗: {e}"))?;
+        .map_err(|e| format!("whisper-cli-gpu の起動に失敗: {e}"))?;
 
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
@@ -117,7 +117,7 @@ pub fn transcribe_with_cuda(
         let mut err_str = String::new();
         err_reader.read_to_string(&mut err_str).ok();
         return Err(format!(
-            "whisper-cli-cuda 異常終了 (exit: {})\n{}",
+            "whisper-cli-gpu 異常終了 (exit: {})\n{}",
             status.code().unwrap_or(-1),
             err_str.trim()
         ));
@@ -211,7 +211,7 @@ fn parse_timecode(tc: &str) -> i64 {
 
 // ---- 検出 ----
 
-fn detect_cuda() -> bool {
+fn detect_gpu() -> bool {
     if Command::new("nvidia-smi").output().map(|o| o.status.success()).unwrap_or(false) { return true; }
     #[cfg(target_os = "windows")]
     {
@@ -224,7 +224,7 @@ fn detect_cuda() -> bool {
     false
 }
 
-fn check_cuda_runtime() -> bool {
+fn check_gpu_runtime() -> bool {
     #[cfg(target_os = "windows")]
     {
         let s = PathBuf::from("C:\\Windows\\System32");

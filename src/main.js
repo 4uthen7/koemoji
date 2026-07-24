@@ -682,10 +682,10 @@ async function refreshGpuSupport() {
     const support = await invoke("check_gpu_support");
     gpuBadge.style.display = "none";
 
-    if (support.cuda_cli_found) {
+    if (support.gpu_cli_found) {
       gpuBadge.style.display = "";
       gpuNote.textContent = "GPU アクセラレーション有効（whisper_cuda.dll 検出）";
-    } else if (support.cuda_available) {
+    } else if (support.gpu_available) {
       gpuNote.textContent = "NVIDIA GPU + CUDA を検出。whisper_cuda.dll をビルドしてください。";
     } else {
       gpuNote.textContent = "GPU は検出されませんでした（CPU で動作します）。";

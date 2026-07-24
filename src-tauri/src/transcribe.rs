@@ -92,11 +92,11 @@ pub async fn transcribe(
     let segments = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<Segment>, String> {
         // ---- 音声文字起こし ----
         // --- 音声文字起こし ---
-        let use_gpu = crate::gpu::is_cuda_available();
+        let use_gpu = crate::gpu::is_gpu_available();
         let mut segments = if use_gpu {
             let _ = app_handle.emit("transcribe-status", StatusPayload { stage: "running".into() });
             let lang = if job_language == "mixed" { "auto" } else { &job_language };
-            crate::gpu::transcribe_with_cuda(
+            crate::gpu::transcribe_with_gpu(
                 &app_handle,
                 &job_path,
                 &model_path.to_string_lossy(),

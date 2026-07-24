@@ -1,72 +1,71 @@
 // @4uthent / tkmt_wonderkid
-// build.rs — nvcc があれば whisper.cpp を CUDA 対応でビルドし whisper-cli-cuda.exe を生成
+// build.rs — GPU アクセラレーション用 whisper-cli のビルド
+//   Windows: nvcc があれば CUDA
+//   macOS:   常に Metal
+//   Linux:   nvcc があれば CUDA
 
 use std::process::Command;
 
 fn main() {
-    let has_cuda = Command::new("nvcc")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-
-    if has_cuda {
-        println!("cargo:warning=nvcc found — building whisper-cli-cuda.exe");
-        build_whisper_cli_cuda();
+    let can_build = if cfg!(target_os = "macos") {
+        // macOS は Metal が使える前提（Apple Silicon / Intel 両対応）
+        true
     } else {
-        println!("cargo:warning=nvcc not found — skipping CUDA build (CPU only)");
+        // Windows / Linux: nvcc が必要
+        Command::new("nvcc").arg("--version").output()
+            .map(|o| o.status.success()).unwrap_or(false)
+    };
+
+    if can_build {
+        let backend = if cfg!(target_os = "macos") { "Metal" } else { "CUDA" };
+        println!("cargo:warning=GPU backend: {backend} — building whisper-cli-gpu");
+        build_whisper_gpu(backend);
+    } else {
+        println!("cargo:warning=nvcc not found — skipping GPU build (CPU only)");
     }
 
     tauri_build::build();
 }
 
-fn build_whisper_cli_cuda() {
+fn build_whisper_gpu(backend: &str) {
     let out_dir = std::env::var("OUT_DIR").unwrap();
-    let build_dir = std::path::Path::new(&out_dir).join("whisper-cuda-build");
+    let build_dir = std::path::Path::new(&out_dir).join("whisper-gpu-build");
 
-    // whisper.cpp を clone（なければ）
     let whisper_dir = std::path::Path::new("whisper.cpp");
     if !whisper_dir.join("CMakeLists.txt").exists() {
         println!("cargo:warning=cloning whisper.cpp...");
         let status = Command::new("git")
             .args(["clone", "https://github.com/ggerganov/whisper.cpp.git"])
-            .status()
-            .expect("git clone failed");
-        if !status.success() {
-            panic!("git clone whisper.cpp failed");
-        }
+            .status().expect("git clone failed");
+        if !status.success() { panic!("git clone whisper.cpp failed"); }
     }
 
     std::fs::create_dir_all(&build_dir).ok();
 
-    // cmake configure（CUDA 有効）
+    let cmake_flag = match backend {
+        "Metal" => "-DWHISPER_METAL=ON",
+        _       => "-DWHISPER_CUDA=ON",
+    };
+
     let status = Command::new("cmake")
-        .args([
-            "-B", build_dir.to_str().unwrap(),
-            "-S", whisper_dir.to_str().unwrap(),
-            "-DWHISPER_CUDA=ON",
-            "-DCMAKE_BUILD_TYPE=Release",
-        ])
-        .status()
-        .expect("cmake failed");
+        .args(["-B", build_dir.to_str().unwrap(),
+               "-S", whisper_dir.to_str().unwrap(),
+               cmake_flag,
+               "-DCMAKE_BUILD_TYPE=Release"])
+        .status().expect("cmake failed");
     if !status.success() {
-        panic!("cmake configure failed — CUDA Toolkit が正しくインストールされているか確認してください");
+        panic!("cmake configure failed — {backend} のセットアップを確認してください");
     }
 
-    // cmake build（main ターゲット = whisper-cli）
     let status = Command::new("cmake")
-        .args(["--build", build_dir.to_str().unwrap(), "--config", "Release", "--target", "main", "--parallel"])
-        .status()
-        .expect("cmake build failed");
-    if !status.success() {
-        panic!("cmake build failed");
-    }
+        .args(["--build", build_dir.to_str().unwrap(),
+               "--config", "Release",
+               "--target", "main",
+               "--parallel"])
+        .status().expect("cmake build failed");
+    if !status.success() { panic!("cmake build failed"); }
 
-    // whisper-cli.exe をターゲットディレクトリにコピー
-    let exe_name = if cfg!(target_os = "windows") { "main.exe" }
-        else if cfg!(target_os = "macos") { "main" }
-        else { "main" };
-
+    let exe_name = if cfg!(target_os = "windows") { "main.exe" } else { "main" };
     let candidates = [
         build_dir.join("bin").join("Release").join(exe_name),
         build_dir.join("bin").join(exe_name),
@@ -75,15 +74,13 @@ fn build_whisper_cli_cuda() {
     let src = candidates.into_iter().find(|p| p.exists());
 
     if let Some(src) = src {
-        let dst_name = if cfg!(target_os = "windows") { "whisper-cli-cuda.exe" }
-            else { "whisper-cli-cuda" };
+        let dst_name = if cfg!(target_os = "windows") { "whisper-cli-gpu.exe" }
+                       else { "whisper-cli-gpu" };
         let dst = std::path::Path::new(&out_dir).join(dst_name);
-        std::fs::copy(&src, &dst).expect("failed to copy whisper-cli-cuda");
-
-        // 環境変数でパスを通知
-        println!("cargo:rustc-env=WHISPER_CLI_CUDA={}", dst.display());
-        println!("cargo:warning=whisper-cli-cuda built: {}", dst.display());
+        std::fs::copy(&src, &dst).expect("failed to copy whisper-cli-gpu");
+        println!("cargo:rustc-env=WHISPER_CLI_GPU={}", dst.display());
+        println!("cargo:warning=whisper-cli-gpu built ({backend}): {}", dst.display());
     } else {
-        println!("cargo:warning=whisper-cli-cuda binary not found after build");
+        println!("cargo:warning=whisper-cli-gpu binary not found after build");
     }
 }
