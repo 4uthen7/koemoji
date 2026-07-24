@@ -51,6 +51,7 @@ pub async fn transcribe(
     language: String,
     translate: bool,
     ocr_enabled: bool,
+    gpu_enabled: bool,
     ocr_interval_secs: u32,
 ) -> Result<Vec<Segment>, String> {
     let model_path = model::model_path(&app, &model_id)?;
@@ -90,7 +91,7 @@ pub async fn transcribe(
 
     let segments = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<Segment>, String> {
         // --- 音声文字起こし ---
-        let use_gpu = crate::gpu::is_gpu_available();
+        let use_gpu = gpu_enabled && crate::gpu::is_gpu_available();
         let mut segments = if use_gpu {
             let _ = app_handle.emit("transcribe-status", StatusPayload { stage: "running".into() });
             let lang = if job_language == "mixed" { "auto" } else { &job_language };

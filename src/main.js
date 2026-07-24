@@ -400,6 +400,7 @@ runBtn.addEventListener("click", async () => {
       translate: translateCheck.checked,
       ocrEnabled: ocrCheck.checked,
       ocrIntervalSecs: Number(ocrInterval.value),
+      gpuEnabled: gpuCheck.checked && gpuSupported,
     });
     renderSegments();
     showToast("文字起こしが完了しました");
