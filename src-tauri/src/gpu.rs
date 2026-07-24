@@ -150,12 +150,24 @@ pub fn cuda_whisper_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join(CUDA_WHISPER_BINARY))
 }
 
-/// CUDA whisper-cli がダウンロード済みで実行可能か。
+/// CUDA が使えるか（コンパイル時 feature または DL 済みバイナリ）。
 pub fn is_cuda_available(app: &AppHandle) -> bool {
-    cuda_whisper_path(app)
-        .map(|p| p.exists())
-        .unwrap_or(false)
+    #[cfg(feature = "cuda")]
+    {
+        // ネイティブ CUDA ビルド: ランタイムDLLがあればOK
+        return check_cuda_runtime();
+    }
+    #[cfg(not(feature = "cuda"))]
+    {
+        // CPU ビルド + DL方式: whisper-cli-cuda.exe があればOK
+        cuda_whisper_path(app)
+            .map(|p| p.exists())
+            .unwrap_or(false)
+    }
 }
+
+/// コンパイル時に CUDA が組み込まれているか。
+pub const CUDA_NATIVE: bool = cfg!(feature = "cuda");
 
 /// CUDA whisper-cli を使って文字起こしを実行する。
 /// whisper-cli の JSON 出力をパースして Segment の配列を返す。

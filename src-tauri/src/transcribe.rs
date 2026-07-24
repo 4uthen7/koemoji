@@ -91,8 +91,9 @@ pub async fn transcribe(
     let use_gpu = gpu::is_cuda_available(&app);
 
     let segments = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<Segment>, String> {
-        // 音声文字起こし: GPU or CPU
-        let mut segments = if use_gpu {
+        // ---- 音声文字起こし ----
+        let mut segments = if use_gpu && !gpu::CUDA_NATIVE {
+            // DL方式: CUDA whisper-cli に任せる
             let _ = app_handle.emit(
                 "transcribe-status",
                 StatusPayload { stage: "running".into() },
@@ -106,7 +107,7 @@ pub async fn transcribe(
                 &cancel,
             )?
         } else {
-            // 1. デコード
+            // CPU またはネイティブ CUDA（whisper-rs が自動でGPU使用）
             let _ = app_handle.emit(
                 "transcribe-status",
                 StatusPayload { stage: "decoding".into() },
@@ -116,7 +117,6 @@ pub async fn transcribe(
                 return Err("キャンセルされました".into());
             }
 
-            // 2. モデル読み込み
             let _ = app_handle.emit(
                 "transcribe-status",
                 StatusPayload { stage: "loading_model".into() },
@@ -135,8 +135,6 @@ pub async fn transcribe(
                 .unwrap_or(4)
                 .min(8);
 
-            // 3. 実行(混在モード or 通常モード)
-            // 2秒未満の極端に短い音声は言語判定が安定しないため通常の自動判定へ
             if job_language == "mixed" && audio.len() >= 2 * SAMPLE_RATE {
                 let tiny_path = model::model_path(&app_handle, "tiny")?;
                 let det_ctx = WhisperContext::new_with_params(
@@ -176,6 +174,7 @@ pub async fn transcribe(
             }
         };
 
+        // ---- 画面OCR（GPU/CPUに関係なく実行） ----
         if ocr_enabled {
             let (mut ocr_segments, ocr_snapshots) = crate::ocr::extract_text_segments(
                 &app_handle,
@@ -183,7 +182,6 @@ pub async fn transcribe(
                 ocr_interval_secs,
                 &cancel,
             )?;
-            // 累積 OCR テキストを AppState に保存（フロントから取得できるように）
             app_handle
                 .state::<crate::AppState>()
                 .ocr_snapshots
@@ -198,7 +196,6 @@ pub async fn transcribe(
             segments.sort_by(|a, b| {
                 a.start_ms
                     .cmp(&b.start_ms)
-                    // 同時刻なら「音声 → 画面」の順でノートに並べる。
                     .then_with(|| (a.source == "ocr").cmp(&(b.source == "ocr")))
             });
         }

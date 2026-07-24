@@ -24,7 +24,13 @@ reqwest = { version = "0.12", default-features = false, features = [
 symphonia = { version = "0.5", features = ["all"] }
 whisper-rs = "0.16"
 
-# GPU アクセラレーションはアプリ内から後付けで有効化できます（README 参照）
+[features]
+default = []
+cuda = ["whisper-rs/cuda"]
+
+# GPU: デフォルトはCPU。
+# `cargo build --features cuda` でシステムのCUDAを直に使うバイナリができる。
+# CUDAがない環境向けには features なしでビルド（アプリ内DLで後付け可）。
 
 
 [profile.release]
