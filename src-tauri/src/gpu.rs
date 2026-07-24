@@ -191,7 +191,7 @@ pub fn transcribe_with_cuda(
         .map_err(|e| format!("CUDA whisper の起動に失敗: {e}"))?;
 
     let stdout = child.stdout.take().unwrap();
-    let reader = std::io::BufReader::new(stdout);
+    let mut reader = std::io::BufReader::new(stdout);
     let mut segments = Vec::new();
 
     // whisper-cli --output-json の出力をパースする。
