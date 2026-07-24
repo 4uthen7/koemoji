@@ -1,176 +1,74 @@
 // @4uthent / tkmt_wonderkid
+// gpu.rs — CUDA 検出 + whisper-cli-cuda.exe の実行（build.rs が自動生成）
 
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use futures_util::StreamExt;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::AppHandle;
 
 use crate::transcribe::Segment;
-
-// ---- ダウンロード元の whisper-cli (CUDA ビルド) ----
-// GitHub Releases にアップロードされた CUDA 対応 whisper-cli の URL。
-// タグ名とファイル名を埋めて使う。
-const CUDA_WHISPER_RELEASE_TAG: &str = "cuda-runtime";
-const CUDA_WHISPER_BINARY: &str = "whisper-cli-cuda.exe";
 
 #[derive(Serialize, Clone)]
 pub struct GpuSupport {
     pub cuda_available: bool,
-    pub cuda_runtime_installed: bool,
-    pub cuda_whisper_downloaded: bool,
+    pub cuda_cli_found: bool,
     pub message: String,
 }
 
-#[derive(Serialize, Clone)]
-struct DownloadProgress {
-    downloaded: u64,
-    total: u64,
-}
-
-/// CUDA が利用可能か総合的にチェックする。
 #[tauri::command]
-pub fn check_gpu_support(app: AppHandle) -> GpuSupport {
-    let cuda_available = detect_cuda();
-    let cuda_runtime_installed = check_cuda_runtime();
-    let downloaded = cuda_whisper_path(&app).map(|p| p.exists()).unwrap_or(false);
+pub fn check_gpu_support() -> GpuSupport {
+    let cuda_available = detect_cuda() && check_cuda_runtime();
+    let cli_found = find_whisper_cli_cuda().is_some();
 
-    let message = if downloaded {
-        "GPU アクセラレーションが有効です。文字起こしに CUDA が使われます。".into()
-    } else if cuda_available && cuda_runtime_installed {
-        "NVIDIA GPU を検出しました。「GPU を有効化」をクリックすると CUDA 対応エンジンをダウンロードします。".into()
+    let message = if cli_found {
+        "GPU アクセラレーション有効（whisper-cli-cuda.exe 検出）".into()
     } else if cuda_available {
-        "NVIDIA GPU は検出されましたが CUDA ランタイムが見つかりません。CUDA Toolkit をインストールしてください。".into()
+        "NVIDIA GPU + CUDA を検出。build.rs が whisper-cli-cuda.exe を自動生成します。".into()
     } else {
-        "NVIDIA GPU が検出されませんでした。CPU で文字起こしを行います。".into()
+        "GPU は検出されませんでした（CPU で動作します）。".into()
     };
 
-    GpuSupport {
-        cuda_available,
-        cuda_runtime_installed,
-        cuda_whisper_downloaded: downloaded,
-        message,
-    }
+    GpuSupport { cuda_available, cuda_cli_found: cli_found, message }
 }
 
-/// CUDA 対応 whisper-cli をダウンロードする。
-/// モデルダウンロードと同じ仕組み（進捗イベント付き）。
-#[tauri::command]
-pub async fn download_cuda_whisper(app: AppHandle) -> Result<(), String> {
-    let final_path = cuda_whisper_path(&app)?;
-    if final_path.exists() {
-        return Ok(());
-    }
-
-    let part_path = final_path.with_extension("exe.part");
-
-    let url = format!(
-        "https://github.com/4uthen7/koemoji/releases/download/{tag}/{binary}",
-        tag = CUDA_WHISPER_RELEASE_TAG,
-        binary = CUDA_WHISPER_BINARY,
-    );
-
-    let response = reqwest::get(&url)
-        .await
-        .map_err(|e| format!("ダウンロードを開始できませんでした: {e}"))?;
-    if !response.status().is_success() {
-        return Err(format!(
-            "ダウンロードに失敗しました (HTTP {})。GitHub Releases に CUDA バイナリがアップロードされているか確認してください。",
-            response.status()
-        ));
-    }
-
-    let total = response.content_length().unwrap_or(0);
-    let mut file = fs::File::create(&part_path)
-        .map_err(|e| format!("ファイルを作成できませんでした: {e}"))?;
-
-    let mut stream = response.bytes_stream();
-    let mut downloaded: u64 = 0;
-    let mut last_emitted_mb: u64 = 0;
-
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("ダウンロード中にエラー: {e}"))?;
-        file.write_all(&chunk)
-            .map_err(|e| format!("書き込みに失敗: {e}"))?;
-        downloaded += chunk.len() as u64;
-
-        let mb = downloaded >> 20;
-        if mb != last_emitted_mb {
-            last_emitted_mb = mb;
-            let _ = app.emit(
-                "gpu-download-progress",
-                DownloadProgress { downloaded, total },
-            );
-        }
-    }
-
-    file.flush().map_err(|e| format!("書き込みに失敗: {e}"))?;
-    drop(file);
-    fs::rename(&part_path, &final_path)
-        .map_err(|e| format!("ファイルの確定に失敗: {e}"))?;
-
-    #[cfg(target_os = "windows")]
-    {
-        // Windows では exe に実行権限は不要（拡張子で判定される）
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&final_path)
-            .map_err(|e| format!("メタデータ取得失敗: {e}"))?
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&final_path, perms)
-            .map_err(|e| format!("実行権限の設定に失敗: {e}"))?;
-    }
-
-    let _ = app.emit(
-        "gpu-download-progress",
-        DownloadProgress {
-            downloaded,
-            total: if total > 0 { total } else { downloaded },
-        },
-    );
-    Ok(())
+pub fn is_cuda_available() -> bool {
+    find_whisper_cli_cuda().is_some()
 }
 
-/// CUDA whisper-cli のバイナリパスを返す。
-pub fn cuda_whisper_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("アプリデータフォルダ取得失敗: {e}"))?
-        .join("gpu");
-    fs::create_dir_all(&dir).map_err(|e| format!("フォルダ作成失敗: {e}"))?;
-    Ok(dir.join(CUDA_WHISPER_BINARY))
+/// whisper-cli-cuda.exe を探す。
+fn find_whisper_cli_cuda() -> Option<PathBuf> {
+    let name = if cfg!(target_os = "windows") { "whisper-cli-cuda.exe" }
+        else { "whisper-cli-cuda" };
+
+    // ビルド時に生成されたパス（環境変数）
+    if let Ok(path) = std::env::var("WHISPER_CLI_CUDA") {
+        let p = PathBuf::from(&path);
+        if p.exists() { return Some(p); }
+    }
+    // 実行ファイルと同じ場所
+    if let Ok(exe) = std::env::current_exe() {
+        let beside = exe.parent().unwrap_or(std::path::Path::new(".")).join(name);
+        if beside.exists() { return Some(beside); }
+    }
+    // ターゲットディレクトリ
+    for dir in &["target/release", "target/debug"] {
+        let p = PathBuf::from(dir).join(name);
+        if p.exists() { return Some(p); }
+    }
+    // OUT_DIR（ビルド時）
+    if let Ok(out) = std::env::var("OUT_DIR") {
+        let p = PathBuf::from(&out).join(name);
+        if p.exists() { return Some(p); }
+    }
+    None
 }
 
-/// CUDA が使えるか（コンパイル時 feature または DL 済みバイナリ）。
-pub fn is_cuda_available(app: &AppHandle) -> bool {
-    #[cfg(feature = "cuda")]
-    {
-        // ネイティブ CUDA ビルド: ランタイムDLLがあればOK
-        return check_cuda_runtime();
-    }
-    #[cfg(not(feature = "cuda"))]
-    {
-        // CPU ビルド + DL方式: whisper-cli-cuda.exe があればOK
-        cuda_whisper_path(app)
-            .map(|p| p.exists())
-            .unwrap_or(false)
-    }
-}
-
-/// コンパイル時に CUDA が組み込まれているか。
-pub const CUDA_NATIVE: bool = cfg!(feature = "cuda");
-
-/// CUDA whisper-cli を使って文字起こしを実行する。
-/// whisper-cli の JSON 出力をパースして Segment の配列を返す。
+/// whisper-cli-cuda.exe で文字起こし。
 pub fn transcribe_with_cuda(
     app: &AppHandle,
     audio_path: &str,
@@ -179,126 +77,84 @@ pub fn transcribe_with_cuda(
     translate: bool,
     cancel: &Arc<AtomicBool>,
 ) -> Result<Vec<Segment>, String> {
-    let whisper_bin = cuda_whisper_path(app)?;
-    if !whisper_bin.exists() {
-        return Err("CUDA whisper バイナリが見つかりません。GPU 有効化を実行してください。".into());
-    }
+    let cli = find_whisper_cli_cuda()
+        .ok_or("whisper-cli-cuda.exe が見つかりません。nvcc をインストールして再ビルドしてください。")?;
 
-    let mut cmd = Command::new(&whisper_bin);
+    let mut cmd = Command::new(&cli);
     cmd.arg("-m").arg(model_path);
     cmd.arg("-f").arg(audio_path);
     cmd.arg("-l").arg(language);
     cmd.arg("--output-json");
-    cmd.arg("--print-progress");
+    if translate { cmd.arg("--translate"); }
 
-    if translate {
-        cmd.arg("--translate");
-    }
-
-    // whisper-cli は stdout に JSON を出力する（--output-json 指定時）
     let mut child = cmd
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| format!("CUDA whisper の起動に失敗: {e}"))?;
+        .map_err(|e| format!("whisper-cli-cuda の起動に失敗: {e}"))?;
 
     let stdout = child.stdout.take().unwrap();
-    let mut reader = std::io::BufReader::new(stdout);
-    let mut segments = Vec::new();
+    let mut reader = BufReader::new(stdout);
+    let mut raw = String::new();
+    reader.read_to_string(&mut raw).map_err(|e| format!("出力読み取りエラー: {e}"))?;
 
-    // whisper-cli --output-json の出力をパースする。
-    // フォーマットはバージョンによって異なるため複数パターンを試す:
-    //   A) {"transcription": [{"timestamps": {"from":"HH:MM:SS.mmm","to":...}, "text":"..."}]}
-    //   B) 1行ずつ {"from":"...","to":"...","text":"..."}
-    let mut raw_output = String::new();
-    use std::io::Read;
-    reader
-        .read_to_string(&mut raw_output)
-        .map_err(|e| format!("出力読み取りエラー: {e}"))?;
     if cancel.load(Ordering::SeqCst) {
-        let _ = child.kill();
-        let _ = child.wait();
+        let _ = child.kill(); let _ = child.wait();
         return Err("キャンセルされました".into());
     }
 
+    let status = child.wait().map_err(|e| format!("プロセス待機エラー: {e}"))?;
+    if !status.success() {
+        return Err("whisper-cli-cuda が異常終了しました".into());
+    }
+
+    let mut segments = Vec::new();
+
     // パターンA: フルJSON
-    if let Ok(full) = serde_json::from_str::<WhisperCliFull>(&raw_output) {
+    if let Ok(full) = serde_json::from_str::<WhisperCliFull>(&raw) {
         for item in full.transcription {
-            if cancel.load(Ordering::SeqCst) { break; }
             let text = item.text.trim().to_string();
             if text.is_empty() { continue; }
-            let seg = Segment {
+            segments.push(Segment {
                 start_ms: parse_timecode(&item.timestamps.from),
                 end_ms: parse_timecode(&item.timestamps.to),
                 text,
                 source: "speech".into(),
-            };
-            let _ = app.emit("transcribe-segment", seg.clone());
-            segments.push(seg);
+            });
         }
     } else {
         // パターンB: 1行ずつ
-        for line in raw_output.lines() {
-            if cancel.load(Ordering::SeqCst) { break; }
+        for line in raw.lines() {
             let line = line.trim();
             if line.is_empty() { continue; }
             if let Ok(s) = serde_json::from_str::<WhisperCliSegment>(line) {
                 let text = s.text.trim().to_string();
                 if text.is_empty() { continue; }
-                let seg = Segment {
+                segments.push(Segment {
                     start_ms: parse_timecode(&s.from),
                     end_ms: parse_timecode(&s.to),
                     text,
                     source: "speech".into(),
-                };
-                let _ = app.emit("transcribe-segment", seg.clone());
-                segments.push(seg);
+                });
             }
         }
-    }
-
-    let status = child.wait().map_err(|e| format!("プロセス待機エラー: {e}"))?;
-    if !status.success() {
-        return Err("CUDA whisper が異常終了しました".into());
     }
 
     Ok(segments)
 }
 
 #[derive(serde::Deserialize)]
-struct WhisperCliFull {
-    transcription: Vec<WhisperCliItem>,
-}
-
+struct WhisperCliFull { transcription: Vec<WhisperCliItem> }
 #[derive(serde::Deserialize)]
-struct WhisperCliItem {
-    timestamps: WhisperCliTimestamps,
-    text: String,
-}
-
+struct WhisperCliItem { timestamps: WhisperCliTimestamps, text: String }
 #[derive(serde::Deserialize)]
-struct WhisperCliTimestamps {
-    from: String,
-    to: String,
-}
-
-/// 1行単位のシンプルな JSON 出力用
+struct WhisperCliTimestamps { from: String, to: String }
 #[derive(serde::Deserialize)]
-struct WhisperCliSegment {
-    from: String,
-    to: String,
-    text: String,
-}
+struct WhisperCliSegment { from: String, to: String, text: String }
 
-/// "HH:MM:SS.mmm" または "HH:MM:SS,mmm" または秒数文字列をミリ秒に変換
 fn parse_timecode(tc: &str) -> i64 {
-    // 秒数(float)の場合: "123.456"
-    if let Ok(secs) = tc.parse::<f64>() {
-        return (secs * 1000.0) as i64;
-    }
-    // "HH:MM:SS.mmm" または "HH:MM:SS,mmm"
-    let cleaned = tc.replace(',', ".");
-    let parts: Vec<&str> = cleaned.split(':').collect();
+    if let Ok(s) = tc.parse::<f64>() { return (s * 1000.0) as i64; }
+    let parts: Vec<&str> = tc.replace(',', ".").split(':').collect();
     if parts.len() == 3 {
         let h: i64 = parts[0].parse().unwrap_or(0);
         let m: i64 = parts[1].parse().unwrap_or(0);
@@ -308,72 +164,34 @@ fn parse_timecode(tc: &str) -> i64 {
     0
 }
 
-// ---- 内部検出ロジック ----
+// ---- 検出 ----
 
-/// NVIDIA GPU + CUDA ドライバが存在するか。
 fn detect_cuda() -> bool {
-    // nvidia-smi（PATH にない場合もあるので System32 も見る）
-    if Command::new("nvidia-smi").output().map(|o| o.status.success()).unwrap_or(false) {
-        return true;
-    }
+    if Command::new("nvidia-smi").output().map(|o| o.status.success()).unwrap_or(false) { return true; }
     #[cfg(target_os = "windows")]
     {
-        if PathBuf::from("C:\\Windows\\System32\\nvidia-smi.exe").exists() {
-            if Command::new("C:\\Windows\\System32\\nvidia-smi.exe")
-                .output().map(|o| o.status.success()).unwrap_or(false)
-            {
-                return true;
-            }
-        }
-    }
-    // ドライバ DLL を直接確認
-    #[cfg(target_os = "windows")]
-    {
-        let sys32 = PathBuf::from("C:\\Windows\\System32");
-        if sys32.join("nvml.dll").exists() || sys32.join("nvcuda.dll").exists() {
-            return true;
-        }
+        if PathBuf::from("C:\\Windows\\System32\\nvidia-smi.exe").exists()
+            && Command::new("C:\\Windows\\System32\\nvidia-smi.exe").output().map(|o| o.status.success()).unwrap_or(false)
+        { return true; }
+        let s = PathBuf::from("C:\\Windows\\System32");
+        if s.join("nvml.dll").exists() || s.join("nvcuda.dll").exists() { return true; }
     }
     false
 }
 
-/// CUDA ランタイムが利用可能か（whisper-cli-cuda.exe の実行に必要な DLL があるか）。
-/// nvcc（コンパイラ）は不要。ドライバ付属のランタイムDLLだけでOK。
 fn check_cuda_runtime() -> bool {
     #[cfg(target_os = "windows")]
     {
-        let sys32 = PathBuf::from("C:\\Windows\\System32");
-        // nvcuda.dll = CUDA Driver API
-        if sys32.join("nvcuda.dll").exists() {
-            return true;
-        }
-        // cudart64_*.dll = CUDA Runtime
-        if let Ok(entries) = std::fs::read_dir(&sys32) {
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                let name = name.to_string_lossy().to_lowercase();
-                if name.starts_with("cudart64_") && name.ends_with(".dll") {
-                    return true;
-                }
-                if name.starts_with("cublas64_") && name.ends_with(".dll") {
-                    return true;
-                }
-            }
-        }
-        // CUDA Toolkit のパスも一応見る
-        if let Ok(dirs) = std::fs::read_dir("C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA") {
-            for d in dirs.flatten() {
-                let bin = d.path().join("bin");
-                if bin.exists() {
-                    return true;
-                }
+        let s = PathBuf::from("C:\\Windows\\System32");
+        if s.join("nvcuda.dll").exists() { return true; }
+        if let Ok(e) = fs::read_dir(&s) {
+            for e in e.flatten() {
+                let n = e.file_name().to_string_lossy().to_lowercase();
+                if (n.starts_with("cudart64_") || n.starts_with("cublas64_")) && n.ends_with(".dll") { return true; }
             }
         }
         return false;
     }
     #[cfg(not(target_os = "windows"))]
-    {
-        Command::new("nvidia-smi").output().map(|o| o.status.success()).unwrap_or(false)
-    }
+    { Command::new("nvidia-smi").output().map(|o| o.status.success()).unwrap_or(false) }
 }
-

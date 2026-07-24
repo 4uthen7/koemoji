@@ -88,26 +88,24 @@ pub async fn transcribe(
 
     // whisper.cpp の実行は重いのでブロッキングスレッドで行う
     // GPU (CUDA) が利用可能ならそちらを使う
-    let use_gpu = gpu::is_cuda_available(&app);
 
     let segments = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<Segment>, String> {
         // ---- 音声文字起こし ----
-        let mut segments = if use_gpu && !gpu::CUDA_NATIVE {
-            // DL方式: CUDA whisper-cli に任せる
-            let _ = app_handle.emit(
-                "transcribe-status",
-                StatusPayload { stage: "running".into() },
-            );
-            gpu::transcribe_with_cuda(
+        // --- 音声文字起こし ---
+        let use_gpu = crate::gpu::is_cuda_available();
+        let mut segments = if use_gpu {
+            let _ = app_handle.emit("transcribe-status", StatusPayload { stage: "running".into() });
+            let lang = if job_language == "mixed" { "auto" } else { &job_language };
+            crate::gpu::transcribe_with_cuda(
                 &app_handle,
                 &job_path,
                 &model_path.to_string_lossy(),
-                &job_language,
+                lang,
                 translate,
                 &cancel,
             )?
         } else {
-            // CPU またはネイティブ CUDA（whisper-rs が自動でGPU使用）
+            // CPU（whisper-rs）
             let _ = app_handle.emit(
                 "transcribe-status",
                 StatusPayload { stage: "decoding".into() },
