@@ -1,3 +1,5 @@
+// @4uthent / tkmt_wonderkid
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 

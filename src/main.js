@@ -1,3 +1,5 @@
+// @4uthent / tkmt_wonderkid
+
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -653,10 +655,13 @@ refreshGpuSupport().catch(() => {});
 // ---------------------------------------------------------------
 const gpuPanel = $("gpu-panel");
 const gpuNote = $("gpu-note");
+const gpuActions = $("gpu-actions");
 const gpuEnableBtn = $("gpu-enable-btn");
+const gpuSkipBtn = $("gpu-skip-btn");
 const gpuBadge = $("gpu-badge");
 const gpuProgress = $("gpu-progress");
 const gpuProgressFill = $("gpu-progress-fill");
+const gpuProgressLabel = $("gpu-progress-label");
 
 let gpuAvailable = false;
 let gpuDownloaded = false;
@@ -666,44 +671,53 @@ async function refreshGpuSupport() {
     const support = await invoke("check_gpu_support");
     gpuAvailable = support.cuda_available && support.cuda_runtime_installed;
     gpuDownloaded = support.cuda_whisper_downloaded;
-    gpuNote.textContent = support.message;
+
+    gpuActions.style.display = "none";
+    gpuBadge.style.display = "none";
+    gpuProgress.classList.add("hidden");
 
     if (gpuDownloaded) {
-      gpuEnableBtn.style.display = "none";
       gpuBadge.style.display = "";
+      gpuNote.textContent = "CUDA 対応エンジンが有効です。文字起こしに GPU を使います。";
     } else if (gpuAvailable) {
-      gpuEnableBtn.style.display = "";
-      gpuBadge.style.display = "none";
+      gpuActions.style.display = "";
+      gpuNote.textContent = "NVIDIA GPU を検出しました。有効にすると文字起こしが高速になります。";
     } else {
-      gpuEnableBtn.style.display = "none";
-      gpuBadge.style.display = "none";
+      gpuNote.textContent = "GPU は検出されませんでした（CPU で動作します）。";
     }
-    gpuProgress.classList.add("hidden");
   } catch (e) {
-    gpuNote.textContent = `GPU の確認に失敗しました: ${e}`;
+    gpuNote.textContent = `確認に失敗: ${e}`;
   }
 }
 
 gpuEnableBtn.addEventListener("click", async () => {
-  gpuEnableBtn.disabled = true;
-  gpuEnableBtn.textContent = "ダウンロード中…";
+  gpuActions.style.display = "none";
   gpuProgress.classList.remove("hidden");
   gpuProgressFill.style.width = "0%";
+  gpuProgressLabel.textContent = "ダウンロード中…";
+  gpuNote.textContent = "CUDA エンジンを取得しています。サイズによっては数分かかります。";
   try {
     await invoke("download_cuda_whisper");
-    showToast("GPU アクセラレーションが有効になりました");
+    showToast("GPU アクセラレーションが有効になりました！");
     await refreshGpuSupport();
   } catch (e) {
     showToast(String(e), true);
-    gpuEnableBtn.disabled = false;
-    gpuEnableBtn.textContent = "GPU を有効化";
+    gpuActions.style.display = "";
     gpuProgress.classList.add("hidden");
+    gpuNote.textContent = "ダウンロードに失敗しました。もう一度お試しください。";
   }
+});
+
+gpuSkipBtn.addEventListener("click", () => {
+  gpuActions.style.display = "none";
+  gpuNote.textContent = "CPU で動作します。GPU はいつでも有効化できます。";
 });
 
 listen("gpu-download-progress", (event) => {
   const { downloaded, total } = event.payload;
   if (total > 0) {
-    gpuProgressFill.style.width = `${Math.floor((downloaded / total) * 100)}%`;
+    const pct = Math.floor((downloaded / total) * 100);
+    gpuProgressFill.style.width = `${pct}%`;
+    gpuProgressLabel.textContent = `ダウンロード中… ${pct}%`;
   }
 });
