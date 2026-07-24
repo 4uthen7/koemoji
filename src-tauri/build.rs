@@ -67,15 +67,12 @@ fn build_whisper_cli_cuda() {
         else if cfg!(target_os = "macos") { "main" }
         else { "main" };
 
-    let src = build_dir.join("bin").join("Release").join(exe_name)
-        .or_else(|| {
-            let p = build_dir.join("bin").join(exe_name);
-            if p.exists() { Some(p) } else { None }
-        })
-        .or_else(|| {
-            let p = build_dir.join("bin").join(format!("Release/{exe_name}"));
-            if p.exists() { Some(p) } else { None }
-        });
+    let candidates = [
+        build_dir.join("bin").join("Release").join(exe_name),
+        build_dir.join("bin").join(exe_name),
+        build_dir.join("bin").join(format!("Release/{exe_name}")),
+    ];
+    let src = candidates.into_iter().find(|p| p.exists());
 
     if let Some(src) = src {
         let dst_name = if cfg!(target_os = "windows") { "whisper-cli-cuda.exe" }
