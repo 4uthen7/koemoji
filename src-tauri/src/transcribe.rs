@@ -91,90 +91,89 @@ pub async fn transcribe(
     let use_gpu = gpu::is_cuda_available(&app);
 
     let segments = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<Segment>, String> {
-        // GPU パス: CUDA whisper-cli に任せる
-        if use_gpu {
+        // 音声文字起こし: GPU or CPU
+        let mut segments = if use_gpu {
             let _ = app_handle.emit(
                 "transcribe-status",
                 StatusPayload { stage: "running".into() },
             );
-            return gpu::transcribe_with_cuda(
+            gpu::transcribe_with_cuda(
                 &app_handle,
                 &job_path,
                 &model_path.to_string_lossy(),
                 &job_language,
                 translate,
                 &cancel,
-            );
-        }
-
-        // 1. デコード
-        let _ = app_handle.emit(
-            "transcribe-status",
-            StatusPayload { stage: "decoding".into() },
-        );
-        let audio = crate::audio::decode_to_mono_16k(&job_path)?;
-        if cancel.load(Ordering::SeqCst) {
-            return Err("キャンセルされました".into());
-        }
-
-        // 2. モデル読み込み
-        let _ = app_handle.emit(
-            "transcribe-status",
-            StatusPayload { stage: "loading_model".into() },
-        );
-        let ctx = WhisperContext::new_with_params(
-            &model_path,
-            WhisperContextParameters::default(),
-        )
-        .map_err(|e| format!("モデルの読み込みに失敗しました: {e}"))?;
-        let mut wstate = ctx
-            .create_state()
-            .map_err(|e| format!("初期化に失敗しました: {e}"))?;
-
-        let threads = std::thread::available_parallelism()
-            .map(|n| n.get() as i32)
-            .unwrap_or(4)
-            .min(8);
-
-        // 3. 実行(混在モード or 通常モード)
-        // 2秒未満の極端に短い音声は言語判定が安定しないため通常の自動判定へ
-        let mut segments = if job_language == "mixed" && audio.len() >= 2 * SAMPLE_RATE {
-            // 判定専用に tiny を読み込む(判定は分類タスクなので tiny で十分)
-            let tiny_path = model::model_path(&app_handle, "tiny")?;
-            let det_ctx = WhisperContext::new_with_params(
-                &tiny_path,
-                WhisperContextParameters::default(),
-            )
-            .map_err(|e| format!("判定用モデルの読み込みに失敗しました: {e}"))?;
-            let mut det_state = det_ctx
-                .create_state()
-                .map_err(|e| format!("判定用モデルの初期化に失敗しました: {e}"))?;
-
-            transcribe_mixed(
-                &app_handle,
-                &mut det_state,
-                &mut wstate,
-                &audio,
-                translate,
-                threads,
-                &cancel,
             )?
         } else {
-            let lang = if job_language == "mixed" { "auto" } else { job_language.as_str() };
+            // 1. デコード
             let _ = app_handle.emit(
                 "transcribe-status",
-                StatusPayload { stage: "running".into() },
+                StatusPayload { stage: "decoding".into() },
             );
-            run_whisper(
-                &app_handle,
-                &mut wstate,
-                &audio,
-                0..audio.len(),
-                lang,
-                translate,
-                threads,
-                &cancel,
-            )?
+            let audio = crate::audio::decode_to_mono_16k(&job_path)?;
+            if cancel.load(Ordering::SeqCst) {
+                return Err("キャンセルされました".into());
+            }
+
+            // 2. モデル読み込み
+            let _ = app_handle.emit(
+                "transcribe-status",
+                StatusPayload { stage: "loading_model".into() },
+            );
+            let ctx = WhisperContext::new_with_params(
+                &model_path,
+                WhisperContextParameters::default(),
+            )
+            .map_err(|e| format!("モデルの読み込みに失敗しました: {e}"))?;
+            let mut wstate = ctx
+                .create_state()
+                .map_err(|e| format!("初期化に失敗しました: {e}"))?;
+
+            let threads = std::thread::available_parallelism()
+                .map(|n| n.get() as i32)
+                .unwrap_or(4)
+                .min(8);
+
+            // 3. 実行(混在モード or 通常モード)
+            // 2秒未満の極端に短い音声は言語判定が安定しないため通常の自動判定へ
+            if job_language == "mixed" && audio.len() >= 2 * SAMPLE_RATE {
+                let tiny_path = model::model_path(&app_handle, "tiny")?;
+                let det_ctx = WhisperContext::new_with_params(
+                    &tiny_path,
+                    WhisperContextParameters::default(),
+                )
+                .map_err(|e| format!("判定用モデルの読み込みに失敗しました: {e}"))?;
+                let mut det_state = det_ctx
+                    .create_state()
+                    .map_err(|e| format!("判定用モデルの初期化に失敗しました: {e}"))?;
+
+                transcribe_mixed(
+                    &app_handle,
+                    &mut det_state,
+                    &mut wstate,
+                    &audio,
+                    translate,
+                    threads,
+                    &cancel,
+                )?
+            } else {
+                let lang = if job_language == "mixed" { "auto" } else { job_language.as_str() };
+                let _ = app_handle.emit(
+                    "transcribe-status",
+                    StatusPayload { stage: "running".into() },
+                );
+                run_whisper(
+                    &app_handle,
+                    &mut wstate,
+                    &audio,
+                    0..audio.len(),
+                    lang,
+                    translate,
+                    threads,
+                    &cancel,
+                )?
+            }
         };
 
         if ocr_enabled {

@@ -360,7 +360,7 @@ fn chrono_now() -> String {
     let mut y = 1970i64;
     let mut remaining = total_days;
     loop {
-        let days_in_year = if is_leap(y) { 366 } else { 365 };
+        let days_in_year: i64 = if is_leap(y) { 366 } else { 365 };
         if remaining < days_in_year {
             break;
         }
@@ -368,7 +368,7 @@ fn chrono_now() -> String {
         y += 1;
     }
 
-    let mon_lengths = if is_leap(y) {
+    let mon_lengths: [i64; 12] = if is_leap(y) {
         [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     } else {
         [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]

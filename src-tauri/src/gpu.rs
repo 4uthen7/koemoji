@@ -186,7 +186,7 @@ pub fn transcribe_with_cuda(
     // whisper-cli は stdout に JSON を出力する（--output-json 指定時）
     let mut child = cmd
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|e| format!("CUDA whisper の起動に失敗: {e}"))?;
 
@@ -194,32 +194,48 @@ pub fn transcribe_with_cuda(
     let reader = std::io::BufReader::new(stdout);
     let mut segments = Vec::new();
 
-    // JSON Lines 形式の出力を1行ずつ読む
-    use std::io::BufRead;
-    for line in reader.lines() {
-        if cancel.load(Ordering::SeqCst) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("キャンセルされました".into());
-        }
+    // whisper-cli --output-json の出力をパースする。
+    // フォーマットはバージョンによって異なるため複数パターンを試す:
+    //   A) {"transcription": [{"timestamps": {"from":"HH:MM:SS.mmm","to":...}, "text":"..."}]}
+    //   B) 1行ずつ {"from":"...","to":"...","text":"..."}
+    let mut raw_output = String::new();
+    use std::io::Read;
+    reader
+        .read_to_string(&mut raw_output)
+        .map_err(|e| format!("出力読み取りエラー: {e}"))?;
+    if cancel.load(Ordering::SeqCst) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err("キャンセルされました".into());
+    }
 
-        let line = line.map_err(|e| format!("出力読み取りエラー: {e}"))?;
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
+    // パターンA: フルJSON
+    if let Ok(full) = serde_json::from_str::<WhisperCliFull>(&raw_output) {
+        for item in full.transcription {
+            if cancel.load(Ordering::SeqCst) { break; }
+            let text = item.text.trim().to_string();
+            if text.is_empty() { continue; }
+            let seg = Segment {
+                start_ms: parse_timecode(&item.timestamps.from),
+                end_ms: parse_timecode(&item.timestamps.to),
+                text,
+                source: "speech".into(),
+            };
+            let _ = app.emit("transcribe-segment", seg.clone());
+            segments.push(seg);
         }
-
-        // whisper-cli の JSON 出力: [{"from": ..., "to": ..., "text": ...}, ...]
-        // または1行ずつのオブジェクト
-        if let Ok(parsed) = serde_json::from_str::<Vec<WhisperCliSegment>>(line) {
-            for s in parsed {
+    } else {
+        // パターンB: 1行ずつ
+        for line in raw_output.lines() {
+            if cancel.load(Ordering::SeqCst) { break; }
+            let line = line.trim();
+            if line.is_empty() { continue; }
+            if let Ok(s) = serde_json::from_str::<WhisperCliSegment>(line) {
                 let text = s.text.trim().to_string();
-                if text.is_empty() {
-                    continue;
-                }
+                if text.is_empty() { continue; }
                 let seg = Segment {
-                    start_ms: (s.from.parse::<f64>().unwrap_or(0.0) * 1000.0) as i64,
-                    end_ms: (s.to.parse::<f64>().unwrap_or(0.0) * 1000.0) as i64,
+                    start_ms: parse_timecode(&s.from),
+                    end_ms: parse_timecode(&s.to),
                     text,
                     source: "speech".into(),
                 };
@@ -238,10 +254,46 @@ pub fn transcribe_with_cuda(
 }
 
 #[derive(serde::Deserialize)]
+struct WhisperCliFull {
+    transcription: Vec<WhisperCliItem>,
+}
+
+#[derive(serde::Deserialize)]
+struct WhisperCliItem {
+    timestamps: WhisperCliTimestamps,
+    text: String,
+}
+
+#[derive(serde::Deserialize)]
+struct WhisperCliTimestamps {
+    from: String,
+    to: String,
+}
+
+/// 1行単位のシンプルな JSON 出力用
+#[derive(serde::Deserialize)]
 struct WhisperCliSegment {
     from: String,
     to: String,
     text: String,
+}
+
+/// "HH:MM:SS.mmm" または "HH:MM:SS,mmm" または秒数文字列をミリ秒に変換
+fn parse_timecode(tc: &str) -> i64 {
+    // 秒数(float)の場合: "123.456"
+    if let Ok(secs) = tc.parse::<f64>() {
+        return (secs * 1000.0) as i64;
+    }
+    // "HH:MM:SS.mmm" または "HH:MM:SS,mmm"
+    let cleaned = tc.replace(',', ".");
+    let parts: Vec<&str> = cleaned.split(':').collect();
+    if parts.len() == 3 {
+        let h: i64 = parts[0].parse().unwrap_or(0);
+        let m: i64 = parts[1].parse().unwrap_or(0);
+        let s: f64 = parts[2].parse().unwrap_or(0.0);
+        return h * 3_600_000 + m * 60_000 + (s * 1000.0) as i64;
+    }
+    0
 }
 
 // ---- 内部検出ロジック ----
