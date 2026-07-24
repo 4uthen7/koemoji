@@ -650,6 +650,27 @@ invoke("check_ocr_support")
 // GPU
 refreshGpuSupport().catch(() => {});
 
+// 起動時に exe へドロップ or 関連付けで渡されたファイルを自動ロード
+async function loadOpenedFile() {
+  try {
+    const path = await invoke("get_opened_file");
+    if (path) {
+      setFile(path);
+      showToast(`${fileName(path)} を読み込みました`);
+    }
+  } catch (_) { /* なければ何もしない */ }
+}
+loadOpenedFile();
+
+// アプリが既に起動中にファイルが渡されたとき（single-instance）
+listen("file-opened", (event) => {
+  const path = event.payload;
+  if (path) {
+    setFile(path);
+    showToast(`${fileName(path)} を読み込みました`);
+  }
+});
+
 // ---------------------------------------------------------------
 // GPU アクセラレーション
 // ---------------------------------------------------------------

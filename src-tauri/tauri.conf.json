@@ -33,6 +33,18 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      {
+        "ext": ["mp3", "wav", "m4a", "aac", "flac", "ogg", "aiff"],
+        "name": "KoeMoji Audio",
+        "description": "音声ファイルを KoeMoji で文字起こし"
+      },
+      {
+        "ext": ["mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv"],
+        "name": "KoeMoji Video",
+        "description": "動画ファイルを KoeMoji で文字起こし"
+      }
     ]
   }
 }

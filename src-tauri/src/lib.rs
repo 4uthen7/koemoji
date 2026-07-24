@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::ocr::OcrSnapshot;
 use serde::Serialize;
-use tauri::State;
+use tauri::{Emitter, Manager, State};
 
 /// アプリ全体で共有する状態
 pub struct AppState {
@@ -21,6 +21,8 @@ pub struct AppState {
     pub cancel_flag: Arc<AtomicBool>,
     /// 最後に実行した OCR の累積スナップショット
     pub ocr_snapshots: Mutex<Option<(Vec<OcrSnapshot>, String)>>,
+    /// exe にドロップされた / 関連付けで開かれたファイルのパス
+    pub opened_file: Mutex<Option<String>>,
 }
 
 #[derive(Serialize)]
@@ -30,7 +32,6 @@ struct CumulativeOcrResult {
 }
 
 /// 最後に実行した OCR の累積テキストを取得する。
-/// 音声のみのファイルや OCR が未実行の場合は available=false で返る。
 #[tauri::command]
 fn get_cumulative_ocr_text(
     state: State<'_, AppState>,
@@ -58,13 +59,47 @@ fn get_cumulative_ocr_text(
     }
 }
 
+/// 起動時に exe へドロップ / 関連付けで渡されたファイルパスを返す。
+/// フロントは起動直後にこれを呼んでファイルを自動ロードする。
+#[tauri::command]
+fn get_opened_file(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let mut guard = state
+        .opened_file
+        .lock()
+        .map_err(|e| format!("内部エラー: {e}"))?;
+    Ok(guard.take())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // コマンドライン引数からファイルパスを拾う
+    let cli_file: Option<String> = std::env::args()
+        .nth(1)
+        .filter(|p| std::path::Path::new(p).exists());
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             cancel_flag: Arc::new(AtomicBool::new(false)),
             ocr_snapshots: Mutex::new(None),
+            opened_file: Mutex::new(cli_file),
+        })
+        .setup(|app| {
+            // ファイルが指定されてる場合、ウィンドウ表示後にイベントを飛ばす
+            let handle = app.handle().clone();
+            let state = handle.state::<AppState>();
+            if let Ok(guard) = state.opened_file.lock() {
+                if let Some(ref path) = *guard {
+                    let path = path.clone();
+                    drop(guard);
+                    // 少し遅延させてWebView準備を待つ
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        let _ = handle.emit("file-opened", path);
+                    });
+                }
+            }
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             gpu::check_gpu_support,
@@ -80,6 +115,7 @@ pub fn run() {
             history::load_history,
             history::delete_history,
             get_cumulative_ocr_text,
+            get_opened_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
