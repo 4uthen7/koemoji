@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use whisper_rs::{
     FullParams, SamplingStrategy, SegmentCallbackData, WhisperContext,
     WhisperContextParameters, WhisperState,

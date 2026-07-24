@@ -207,7 +207,7 @@ pub fn extract_text_segments(
         let raw = String::from_utf8_lossy(&output.stdout);
         let current_lines = clean_lines(&raw);
         let novel_lines = remove_repeated_lines(&current_lines, &previous_lines);
-        previous_lines = current_lines;
+        previous_lines = current_lines.clone();
 
         if !novel_lines.is_empty() {
             let start_ms = index as i64 * interval_secs as i64 * 1000;
