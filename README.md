@@ -185,13 +185,31 @@ npm run tauri build
 
 ## トラブルシューティング
 
+### 音声認識
 - **英語が「（英語）」になる** → 言語を「日英混在」にして
+- **whisper_full_with_state: failed to encode** → whisper-rs 0.16 のバグ。`transcribe.rs` の abort callback を触らないで
+
+### ビルド
 - **tauri dev が再起動ループ** → iCloud 同期フォルダ避けて `~/dev/` とかに置く
 - **cmake not found** → CMake 入れて PATH 通す
-- **GPU 有効化ボタン出ない** → `nvidia-smi` が通るか確認。CUDA Toolkit が入ってないと検出されない
-- **GPU DL に失敗する** → GitHub Releases の `cuda-runtime` タグに `whisper-cli-cuda.exe` が置いてあるか確認
-- **whisper_full_with_state: failed to encode** → whisper-rs 0.16 のバグ。`transcribe.rs` の abort callback を触らないで
 - **whisper-rs バージョンアップでコンパイルエラー** → 0.16 系のAPIに合わせてる
+
+### GPU（Mac / Metal）
+- **`whisper-cli-gpu 異常終了 (exit: 1)` でコマンドラインに `-f` や `--output-json` が表示される** → 古いビルドが残ってる。`cargo clean` して再ビルド
+  ```bash
+  cd src-tauri && cargo clean && cd .. && npm run tauri dev
+  ```
+- **`ggml_metal_library_init` で時間がかかる** → 初回のみ Metal ライブラリのコンパイルが走る。2回目以降は速い
+
+### GPU（Windows / CUDA）
+- **`whisper-cli-gpu 異常終了 (exit: 1073714515)`** → CUDA ランタイム DLL が見つからない。NVIDIA ドライバだけじゃなく [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) をインストールして
+- **nvcc not found** → CUDA Toolkit が入ってないか PATH が通ってない。`nvcc --version` が通るか確認
+- **GPU 有効化トグルが出ない** → `nvidia-smi` が通るか確認。`C:\Windows\System32\nvcuda.dll` が存在すれば GPU は認識される
+- **ビルド時に whisper.cpp の clone が失敗** → ネットワーク確認。`src-tauri/whisper.cpp` を手動で clone してもいい
+
+### 配布
+- **GPU 使いたいユーザー向け** → CUDA Toolkit 入れてソースからビルドしてもらう。ビルド時に `build.rs` が自動で `whisper-cli-gpu.exe` を生成する
+- **CPU のみのユーザー** → 配布バイナリでそのまま動く
 
 ---
 
