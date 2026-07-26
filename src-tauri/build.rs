@@ -78,6 +78,17 @@ fn build_whisper_gpu(backend: &str) {
                        else { "whisper-cli-gpu" };
         let dst = std::path::Path::new(&out_dir).join(dst_name);
         std::fs::copy(&src, &dst).expect("failed to copy whisper-cli-gpu");
+
+        // 必要な DLL もコピー（Windows の共有ライブラリビルド用）
+        let src_dir = src.parent().unwrap_or(std::path::Path::new("."));
+        for dll in &["ggml.dll", "ggml-base.dll", "ggml-cpu.dll", "ggml-cuda.dll", "whisper.dll"] {
+            let dll_src = src_dir.join(dll);
+            if dll_src.exists() {
+                let dll_dst = std::path::Path::new(&out_dir).join(dll);
+                std::fs::copy(&dll_src, &dll_dst).ok();
+            }
+        }
+
         println!("cargo:rustc-env=WHISPER_CLI_GPU={}", dst.display());
         println!("cargo:warning=whisper-cli-gpu built ({backend}): {}", dst.display());
     } else {
