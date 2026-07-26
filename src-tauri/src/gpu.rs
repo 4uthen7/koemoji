@@ -1,4 +1,5 @@
 // @4uthent / tkmt_wonderkid
+#![allow(unreachable_code)]
 // gpu.rs — GPU 検出 + whisper-cli-gpu の実行
 
 use std::fs;
@@ -84,6 +85,24 @@ pub fn transcribe_with_gpu(
     cmd.arg("-pp"); // プログレス表示
     if translate { cmd.arg("-tr"); }
     cmd.arg(&input_path);
+
+    // Windows: CUDA Toolkit の bin ディレクトリを PATH に追加
+    // （インストール済みでも PATH が通ってないケースが多いため）
+    #[cfg(target_os = "windows")]
+    {
+        use std::ffi::OsString;
+        let extra_paths = find_cuda_bin_dirs();
+        if !extra_paths.is_empty() {
+            let separator = if cfg!(target_os = "windows") { ";" } else { ":" };
+            let existing = std::env::var("PATH").unwrap_or_default();
+            let mut new_path = existing;
+            for p in &extra_paths {
+                new_path.push_str(separator);
+                new_path.push_str(&p.to_string_lossy());
+            }
+            cmd.env("PATH", new_path);
+        }
+    }
 
     let mut child = cmd
         .stderr(Stdio::piped())
@@ -221,9 +240,37 @@ struct WhisperOffsets {
     to: i64,
 }
 
+// ---- CUDA パス解決（Windows） ----
+
+#[cfg(target_os = "windows")]
+fn find_cuda_bin_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    // CUDA Toolkit 標準インストール先
+    let base = PathBuf::from("C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA");
+    if let Ok(entries) = fs::read_dir(&base) {
+        for e in entries.flatten() {
+            let bin = e.path().join("bin");
+            if bin.exists() { dirs.push(bin); }
+        }
+    }
+    // CUDA が Program Files 以外に入ってる場合の環境変数
+    for key in &["CUDA_PATH", "CUDA_HOME", "CUDA_ROOT"] {
+        if let Ok(val) = std::env::var(key) {
+            let p = PathBuf::from(&val).join("bin");
+            if p.exists() && !dirs.contains(&p) { dirs.push(p); }
+        }
+    }
+    dirs
+}
+
+#[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
+fn find_cuda_bin_dirs() -> Vec<PathBuf> { Vec::new() }
+
 // ---- 検出 ----
 
 fn detect_gpu() -> bool {
+    #[allow(unreachable_code)]
     #[cfg(target_os = "macos")]
     { return true; }
     #[cfg(target_os = "windows")]
@@ -236,6 +283,7 @@ fn detect_gpu() -> bool {
 }
 
 fn check_gpu_runtime() -> bool {
+    #[allow(unreachable_code)]
     #[cfg(target_os = "macos")]
     { return true; }
     #[cfg(target_os = "windows")]
